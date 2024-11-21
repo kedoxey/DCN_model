@@ -1,0 +1,20 @@
+sim_name: 'default'
+
+sf_exc_gmax: 0.19  # undetermined
+fin_exc_gmax: 0.016
+fic_exc_gmax: 0.05
+icf_exc_gmax: 0.05
+icin_exc_gmax: 0.05
+inf_inh_gmax: 0.0045
+
+bkg_weight: 0.0152
+bkg_rate: 16
+
+in_amp: 0.95
+
+enable_loss: False
+enable_IC: False
+
+diam: 50
+num_cells: 800
+sim_dur: 1000

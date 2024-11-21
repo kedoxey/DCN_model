@@ -1,0 +1,16 @@
+!!python/object:argparse.Namespace
+bkg_rate: 16
+bkg_weight: 0.0152
+diam: 50
+enable_IC: true
+enable_loss: true
+fic_exc_gmax: 0.05
+fin_exc_gmax: 0.016
+icf_exc_gmax: 0.05
+icin_exc_gmax: 0.05
+in_amp: 0.55
+inf_inh_gmax: 0.0045
+num_cells: 800
+sf_exc_gmax: 0.19
+sim_dur: 1000
+sim_name: fully connected
