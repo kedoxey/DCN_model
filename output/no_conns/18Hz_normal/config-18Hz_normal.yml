@@ -1,0 +1,12 @@
+!!python/object:argparse.Namespace
+bkg_rate: 26
+bkg_weight: 0.3
+diam: 50
+enable_IC: false
+enable_conns: false
+enable_loss: false
+in_amp: 0
+nsa_freq: 18
+num_cells: 800
+sim_dur: 1000
+sim_name: no_conns

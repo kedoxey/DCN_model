@@ -1,8 +1,10 @@
 import os
 import yaml
 import shutil
+import random
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 
 def get_output_dir(sim_name, sim_label):
 
@@ -55,41 +57,88 @@ def save_config(sim_dir, sim_label, config_name='default_config'):
     
     print('Config saved!')
 
-def define_int_conns(num_cells):
-    int_conn_ids = {}
-    int_ids = [i for i in range(num_cells)]
-    weight_pattern = [1, 2, 3, 3, 3, 2, 1]
-    int_weight_patterns = {}
-    for int_id in int_ids:
-        l_lb, l_ub = (int_id-7, int_id-1) if int_id>0 else (0.5, 0.5)
-        if l_lb < 0: l_lb = 0
-        r_lb, r_ub = int_id+1, int_id+7
+def define_freqs(num_cells):
 
-        left_ids = int_ids[l_lb:l_ub+1] if l_lb != 0.5 else []
-        right_ids = int_ids[r_lb:r_ub+1]
+    freqs = [0 for i in range(num_cells)]
 
-        int_conn_ids[int_id] = {'left': left_ids,
-                                'right': right_ids}
+    initial = 1250
+    final = 20000
 
-        left_pattern = [weight_pattern[-i-1] for i, _ in enumerate(left_ids)] if left_ids else []
-        right_pattern = [weight_pattern[i] for i, _ in enumerate(right_ids)]
+    oct_step = 0.005
+    step_factor = 2**oct_step
 
-        int_weight_patterns[int_id] = {'left': left_pattern,
-                                    'right': right_pattern}
+    for i in range(num_cells):
+        if i == 0:
+            freqs[i] = initial
+            continue
 
-    i2f_connList = {}
+        freqs[i] = freqs[i-1]*step_factor
+    
+    return freqs
 
-    for int_conn_id, lr_ids in int_conn_ids.items():
+def define_conns(num_cells, freqs, conn_params):
+
+    df = pd.DataFrame.from_dict(conn_params)
+
+    cell_ids = {'AN': [i for i in range(num_cells)],
+                'W': [i for i in range(num_cells)],
+                'I2': [i for i in range(num_cells)],
+                'P': [i for i in range(num_cells)]}
+
+    conns = {'AN_W': [],
+            'AN_I2': [],
+            'AN_P': [],
+            'W_I2': [],
+            'W_P': [],
+            'I2_P': []}
+    
+    freqs_arr = np.array(freqs)
+    freqs_round = np.round(freqs_arr,0)
+
+    for conn, row in df.iterrows():
         temp = 5
-        for side, side_ids in lr_ids.items():
-            for side_i, side_id in enumerate(side_ids):
-                side_weight = int_weight_patterns[int_conn_id][side][side_i]
-                if side_weight in i2f_connList.keys():
-                    i2f_connList[side_weight].append([int_conn_id, side_id])
-                else:
-                    i2f_connList[side_weight] = [[int_conn_id, side_id]]
 
-    return i2f_connList
+        source = conn.split('_')[0]
+        source_ids = cell_ids[source]
+
+        target = conn.split('_')[1]
+        target_ids = cell_ids[target]
+
+        conn_list = []
+
+        for target_id in target_ids:
+
+            target_freq = freqs_round[target_id]
+
+            bw = row.BW
+            bw_split = bw / 2
+            num_source = int(row.N)
+
+            lb_freq = int(target_freq * 2**-bw_split)
+            if lb_freq < 1250: lb_freq = 1250
+            ub_freq = int(target_freq * 2**bw_split)
+
+            lb = (np.abs(freqs_round - lb_freq)).argmin()
+            ub = (np.abs(freqs_round - ub_freq)).argmin()
+
+            source_pool = source_ids[lb:ub]
+
+            if target_id == 0:
+                bw_whole = len(source_pool)*2
+            if num_source > len(source_pool):
+                num_source *= (len(source_pool)/bw_whole)
+
+            try:
+                source_rand = random.sample(source_pool,int(num_source))
+            except ValueError:
+                print(conn,target_id)
+
+            conn_list.extend([[i,target_id] for i in source_rand])
+
+        conns[conn] = conn_list
+
+    return conns
+
 
 def plot_spike_frequency(times, spikes, pop, pop_label, sim_dir, sim_label, colors):
 
@@ -111,7 +160,7 @@ def plot_spike_frequency(times, spikes, pop, pop_label, sim_dir, sim_label, colo
 
     axs.set_title(f'{pop_label} spike frequency')
     axs.set_ylabel('Freuency (Hz)')
-    axs.set_ylim([-3,200])
+    # axs.set_ylim([-3,200])
     axs.set_xlim([pop.cellGids[0]-2, pop.cellGids[-1]+2])
     axs.set_xticks(pop.cellGids)
     axs.set_xticklabels(range(len(pop.cellGids)), rotation=90)
@@ -126,6 +175,8 @@ def plot_spike_times(num_cells, times, spikes, pops, sim_dir, sim_label, colors)
 
     tot_cells = 0
     for pop_label, pop in pops.items():
+        # if 'vecstim' in pop_label:
+        #     continue
         for gid in pop.cellGids:
             spike_times = times[np.where(spikes == gid)]
 

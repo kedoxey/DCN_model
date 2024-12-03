@@ -1,0 +1,15 @@
+sim_name: 'default'
+
+bkg_weight: 0.3
+bkg_rate: 26
+
+in_amp: 0.95
+
+enable_loss: False
+enable_IC: False
+enable_conns: True
+nsa_freq: 23
+
+diam: 50
+num_cells: 800
+sim_dur: 1000

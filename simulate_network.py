@@ -23,9 +23,12 @@ def run_sim(config_name, *batch_params):
         setattr(params, batch_param, batch_value)
 
     # TODO: update sim_label
-    sim_label = f'SF{params.sf_exc_gmax}-FInt{params.fin_exc_gmax}-FIC{params.fic_exc_gmax}-ICF{params.icf_exc_gmax}-ICInt{params.icin_exc_gmax}-IntF{params.inf_inh_gmax}-{params.in_amp}nA-full_network'
+    # sim_label = f'SF{params.sf_exc_gmax}-FInt{params.fin_exc_gmax}-FIC{params.fic_exc_gmax}-ICF{params.icf_exc_gmax}-ICInt{params.icin_exc_gmax}-IntF{params.inf_inh_gmax}-{params.in_amp}nA-full_network'
+    if params.nsa_freq > 0:
+        sim_label = f'{params.num_cells}cells-{params.nsa_freq}Hz'
+    else:
+        sim_label = f'{params.bkg_rate}x{params.bkg_weight}bkg'
     sim_label += '_loss' if params.enable_loss else '_normal'
-    if not params.enable_IC: sim_label += '_no-IC'
 
     output_dir, sim_dir = mh.get_output_dir(params.sim_name, sim_label)
     mh.write_config(params,sim_dir,sim_label,config_name)
@@ -39,7 +42,7 @@ def run_sim(config_name, *batch_params):
     # cfg.recordStim = True
     cfg.filename = os.path.join(sim_dir, f'{sim_label}-DCN') 	# Set file output name
     cfg.savePickle = False
-    # cfg.analysis['plotTraces'] = {'include': ['all'], 'saveFig': False, 'showFig': False}  # Plot recorded traces for this list of cells
+    cfg.analysis['plotTraces'] = {'include': [('P_pop', 0)], 'saveFig': True, 'showFig': False}  # Plot recorded traces for this list of cells
     # cfg.analysis['plotSpikeFreq'] = {'include': ['all'], 'saveFig': True, 'showFig': True}
     cfg.hParams['celsius'] = 34.0 
     cfg.hParams['v_init'] = -60
@@ -80,79 +83,136 @@ def run_sim(config_name, *batch_params):
     netParams.synMechParams['inh'] = {'mod': 'ExpSyn', 'tau': 10, 'e': -70}
 
     ### Connections ###
+    freqs = mh.define_freqs(params.num_cells)
+
+    conn_params = {'BW': {'AN_W': 2,
+                      'AN_I2': 0.4,
+                      'AN_P': 0.4,
+                      'W_I2': 0.1,
+                      'W_P': 0.1,
+                      'I2_P': 0.6},
+                    'N': {'AN_W': 140,
+                          'AN_I2': 48,
+                          'AN_P': 48,
+                          'W_I2': 15,
+                          'W_P': 15,
+                          'I2_P': 21}}
+
+    
 
     ### Excitatory ###
-    netParams.connParams['AN->W'] = {
-        'preConds': {'pop': 'AN_pop'},
-        'postConds': {'pop': 'W_pop'},
-        'synsPerConn': 1,
-        'synMech': 'exc',
-        'weight': 0.06,
-        'connList': None
-    }
+    if params.enable_conns:
 
-    netParams.connParams['AN->I2'] = {
-        'preConds': {'pop': 'AN_pop'},
-        'postConds': {'pop': 'I2_pop'},
-        'synsPerConn': 1,
-        'synMech': 'exc',
-        'weight': 0.55,
-        'connList': None
-    }
+        conns_list = mh.define_conns(params.num_cells, freqs, conn_params)
+        
+        netParams.connParams['AN->W'] = {
+            'preConds': {'pop': 'AN_pop'},
+            'postConds': {'pop': 'W_pop'},
+            'synsPerConn': 1,
+            'synMech': 'exc',
+            'weight': 0.06,
+            'connList': conns_list['AN_W']
+        }
 
-    netParams.connParams['AN->P'] = {
-        'preConds': {'pop': 'AN_pop'},
-        'postConds': {'pop': 'P_pop'},
-        'synsPerConn': 1,
-        'synMech': 'exc',
-        'weight': 0.25,
-        'connList': None
-    }
+        netParams.connParams['AN->I2'] = {
+            'preConds': {'pop': 'AN_pop'},
+            'postConds': {'pop': 'I2_pop'},
+            'synsPerConn': 1,
+            'synMech': 'exc',
+            'weight': 0.55,
+            'connList': conns_list['AN_I2']
+        }
 
-    ### Inhibitory ###
-    netParams.connParams['W->I2'] = {
-        'preConds': {'pop': 'W_pop'},
-        'postConds': {'pop': 'I2_pop'},
-        'synsPerConn': 1,
-        'synMech': 'inh',
-        'weight': 1.4,
-        'connList': None
-    }
+        netParams.connParams['AN->P'] = {
+            'preConds': {'pop': 'AN_pop'},
+            'postConds': {'pop': 'P_pop'},
+            'synsPerConn': 1,
+            'synMech': 'exc',
+            'weight': 0.25,
+            'connList': conns_list['AN_P']
+        }
 
-    netParams.connParams['W->P'] = {
-        'preConds': {'pop': 'W_pop'},
-        'postConds': {'pop': 'P_pop'},
-        'synsPerConn': 1,
-        'synMech': 'inh',
-        'weight': 0.1,
-        'connList': None
-    }
+        ### Inhibitory ###
+        netParams.connParams['W->I2'] = {
+            'preConds': {'pop': 'W_pop'},
+            'postConds': {'pop': 'I2_pop'},
+            'synsPerConn': 1,
+            'synMech': 'inh',
+            'weight': 1.4,
+            'connList': conns_list['W_I2']
+        }
 
-    netParams.connParams['I2->P'] = {
-        'preConds': {'pop': 'I2_pop'},
-        'postConds': {'pop': 'P_pop'},
-        'synsPerConn': 1,
-        'synMech': 'inh',
-        'weight': 2.25,
-        'connList': None
-    }
+        netParams.connParams['W->P'] = {
+            'preConds': {'pop': 'W_pop'},
+            'postConds': {'pop': 'P_pop'},
+            'synsPerConn': 1,
+            'synMech': 'inh',
+            'weight': 0.1,
+            'connList': conns_list['W_P']
+        }
+
+        netParams.connParams['I2->P'] = {
+            'preConds': {'pop': 'I2_pop'},
+            'postConds': {'pop': 'P_pop'},
+            'synsPerConn': 1,
+            'synMech': 'inh',
+            'weight': 2.25,
+            'connList': conns_list['I2_P']
+        }
 
 
     ### Input ###
     # TODO: tonic simulation
-    netParams.stimSourceParams['bkg'] = {'type': 'NetStim', 'rate': params.bkg_rate, 'noise': 1}
-    netParams.stimTargetParams['bkg->ALL'] = {'source': 'bkg', 'conds': {'cellType': ['IzhCell']}, 'weight': params.bkg_weight, 'delay': 0, 'synMech': 'exc'}
+    # TODO: spontaneous activity for just P_pop
+    # TODO: 30-40 Hz spontaneous for ANF
+
+    recip_conns = [[i,i] for i in range(params.num_cells)]
+
+    # Principal cell spontaneous activity
+    if params.nsa_freq > 0:
+
+        netParams.popParams[f'vecstim_NSA'] = {
+                'cellModel': 'VecStim',
+                'numCells': 1,  # int(len(syn_secs)/4),
+                'spikePattern': {'type': 'poisson',
+                                'start': 0,
+                                'stop': -1,
+                                'frequency': params.nsa_freq}  #  np.random.randint(params.spk_freq_lb, params.spk_freq_ub, 1)[0]}
+            }
+
+        netParams.connParams[f'vecstim_NSA->P'] = {
+            'preConds': {'pop': f'vecstim_NSA'},
+            'postConds': {'pop': 'P_pop'},
+            'sec': 'soma',
+            'synsPerConn': 1,
+            'synMech': 'exc',
+            'weight': 1,  # 
+            # 'synMechWeightFactor': [0.5,0.5],
+            'delay': 'defaultDelay + dist_2D/propVelocity',
+            'probability': 1.0,
+            'connList': recip_conns
+        }
+
+    else:
+        netParams.stimSourceParams['bkg_P'] = {'type': 'NetStim', 'rate': params.bkg_rate, 'noise': 1}
+        netParams.stimTargetParams['bkg_P->ALL'] = {'source': 'bkg_P', 'conds': {'pop': ['P_pop']}, 'weight': params.bkg_weight, 'delay': 0, 'synMech': 'exc'}
+
+    
+    # Auditory nerve fiber spontaneous activity
+    netParams.stimSourceParams['bkg_AN'] = {'type': 'NetStim', 'rate': params.bkg_rate-4, 'noise': 1}
+    netParams.stimTargetParams['bkg_AN->ALL'] = {'source': 'bkg_AN', 'conds': {'pop': ['AN_pop']}, 'weight': params.bkg_weight, 'delay': 0, 'synMech': 'exc'}
+    
 
     # TODO: preferred stimulus
-    netParams.stimSourceParams['IClamp0'] = {'type': 'IClamp', 'del': 0, 'dur': params.sim_dur, 'amp': 0.1625}
-    netParams.stimTargetParams['IClamp->allSGN'] = {'source': 'IClamp0', 'sec': 'soma', 'loc': 0.5, 'conds': {'pop': 'SGN_pop'}}
+    # netParams.stimSourceParams['IClamp0'] = {'type': 'IClamp', 'del': 0, 'dur': params.sim_dur, 'amp': 0.1625}
+    # netParams.stimTargetParams['IClamp->allSGN'] = {'source': 'IClamp0', 'sec': 'soma', 'loc': 0.5, 'conds': {'pop': 'SGN_pop'}}
 
-    center_in = (params.num_cells // 2) - 20
-    netParams.stimSourceParams['IClamp1'] = {'type': 'IClamp', 'del': 0, 'dur': params.sim_dur, 'amp': params.in_amp}
-    netParams.stimTargetParams['IClamp->SGNmid'] = {'source': 'IClamp1', 'sec': 'soma', 'loc': 0.5, 'conds': {'pop': 'SGN_pop', 'cellList': [center_in]}}
+    # center_in = (params.num_cells // 2) - 20
+    # netParams.stimSourceParams['IClamp1'] = {'type': 'IClamp', 'del': 0, 'dur': params.sim_dur, 'amp': params.in_amp}
+    # netParams.stimTargetParams['IClamp->SGNmid'] = {'source': 'IClamp1', 'sec': 'soma', 'loc': 0.5, 'conds': {'pop': 'SGN_pop', 'cellList': [center_in]}}
 
-    netParams.stimSourceParams['IClamp2'] = {'type': 'IClamp', 'del': 0, 'dur': params.sim_dur, 'amp': params.in_amp/2}  # -0.3}
-    netParams.stimTargetParams['IClamp->SGNside'] = {'source': 'IClamp2', 'sec': 'soma', 'loc': 0.5, 'conds': {'pop': 'SGN_pop', 'cellList': [center_in-1, center_in+1]}}
+    # netParams.stimSourceParams['IClamp2'] = {'type': 'IClamp', 'del': 0, 'dur': params.sim_dur, 'amp': params.in_amp/2}  # -0.3}
+    # netParams.stimTargetParams['IClamp->SGNside'] = {'source': 'IClamp2', 'sec': 'soma', 'loc': 0.5, 'conds': {'pop': 'SGN_pop', 'cellList': [center_in-1, center_in+1]}}
 
     # num_sgn_high = 40
     # sgn_high_ids = [i for i in range(params.num_cells-num_sgn_high-1,params.num_cells)]
@@ -166,11 +226,17 @@ def run_sim(config_name, *batch_params):
     times = np.array(simData['spkt'])
     spikes = np.array(simData['spkid'])
 
-    colors = {'SGN_pop': 'tab:red', 'Int_pop': 'tab:green', 'Fusi_pop': 'tab:purple','IC_pop': 'tab:orange'}
+    base_colors = ['tab:red', 'tab:green', 'tab:purple', 'tab:orange', 'tab:blue']
+    colors = {f'{pop_label}_pop': base_colors[i] for i, pop_label in enumerate(pop_labels_nums.keys())}
+    colors['vecstim_NSA'] = base_colors[-1]
+
+
 
     ### Plot spike frequencies ###
     pop_msfs = {}
     for pop_label, pop in pops.items():
+        # if 'vecstim' in pop_label:
+        #     continue
         pop_msf = mh.plot_spike_frequency(times, spikes, pop, pop_label, sim_dir, sim_label, colors)
         pop_msfs[pop_label] = float(pop_msf)
 
@@ -180,5 +246,5 @@ def run_sim(config_name, *batch_params):
     ### Plot spike times ###
     mh.plot_spike_times(params.num_cells, times, spikes, pops, sim_dir, sim_label, colors)
 
-    return pop_msfs
+    # return pop_msfs
 

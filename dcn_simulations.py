@@ -2,18 +2,18 @@ import simulate_network
 import numpy as np
 from sklearn.model_selection import ParameterGrid
 
-config_name = 'default_config'
+config_name = 'dcn_config'
 
-paramGrid = {'sim_name': ['fully connected'],
-             'in_amp': [0.55],
-             'sf_exc_gmax': [0.19],
-             'fin_exc_gmax': [0.016],
-             'fic_exc_gmax': [0.05],
-             'icf_exc_gmax': [0.05],
-             'icin_exc_gmax': [0.05],
-             'inf_inh_gmax': [0.0045],
-             'enable_loss': [True, False],
-             'enable_IC': [True, False]}
+paramGrid = {'sim_name': ['no_conns-Poisson'],
+             'num_cells': [800],
+             'in_amp': [0],
+             'bkg_rate': [26],
+             'bkg_weight': [0.3],
+             'nsa_freq': [23],
+             'enable_loss': [False],
+             'enable_IC': [False],
+             'enable_conns': [False]}
+
 batchParamsList = list(ParameterGrid(paramGrid))
 
 for batchParams in batchParamsList:
