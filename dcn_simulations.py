@@ -4,15 +4,21 @@ from sklearn.model_selection import ParameterGrid
 
 config_name = 'dcn_config'
 
-paramGrid = {'sim_name': ['no_conns-Poisson'],
+# TODO: add one connection at a time
+
+conn = None
+
+paramGrid = {'sim_name': [f'all_conns-bkg-pref_stim'],
              'num_cells': [800],
              'in_amp': [0],
-             'bkg_rate': [26],
-             'bkg_weight': [0.3],
-             'nsa_freq': [23],
+             'bkg_rate_P': [30],
+             'bkg_rate_AN': [13],
+             'bkg_weight': [0.05],
+             'nsa_freq': [0],
              'enable_loss': [False],
              'enable_IC': [False],
-             'enable_conns': [False]}
+             'enable_conns': [True],
+             'single_conn': [conn]}
 
 batchParamsList = list(ParameterGrid(paramGrid))
 

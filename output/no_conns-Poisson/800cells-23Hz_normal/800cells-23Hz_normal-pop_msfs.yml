@@ -1,5 +1,20 @@
-AN_pop: 35.40552027603276
-I2_pop: 0.0
-P_pop: 40.002000100026414
-W_pop: 0.0
-vecstim_NSA: 25.001250062516515
+AN_pop:
+  driven: 67.05411693731766
+  overall: 34.64778619409913
+  spontaneous: 67.50996942716625
+I2_pop:
+  driven: 0.0
+  overall: 0.0
+  spontaneous: 0.0
+P_pop:
+  driven: 75.13104848393097
+  overall: 44.18813793406103
+  spontaneous: 59.30258330864558
+W_pop:
+  driven: 0.0
+  overall: 0.0
+  spontaneous: 0.0
+vecstim_NSA:
+  driven: 74.77244742620024
+  overall: 27.99486553529234
+  spontaneous: 32.59948101746038

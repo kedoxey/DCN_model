@@ -10,3 +10,5 @@ nsa_freq: 0
 num_cells: 800
 sim_dur: 1000
 sim_name: no_conns-bkg
+stim_delay: 300
+stim_dur: 200

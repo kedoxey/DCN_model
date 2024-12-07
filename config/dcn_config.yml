@@ -1,15 +1,19 @@
 sim_name: 'default'
 
-bkg_weight: 0.3
-bkg_rate: 26
-
-in_amp: 0.95
+diam: 50
+num_cells: 800
 
 enable_loss: False
 enable_IC: False
 enable_conns: True
-nsa_freq: 23
+single_conn: 'AN_W'
 
-diam: 50
-num_cells: 800
+bkg_weight: 0.05
+bkg_rate_P: 30
+bkg_rate_AN: 13
+nsa_freq: 21
+
 sim_dur: 1000
+in_amp: 0
+stim_dur: 200
+stim_delay: 300
