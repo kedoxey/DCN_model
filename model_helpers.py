@@ -19,11 +19,15 @@ def get_output_dir(sim_name, sim_label):
     if not os.path.exists(sim_top_dir):
         os.mkdir(sim_top_dir)
 
+    data_dir = os.path.join(sim_top_dir, 'data')
+    if not os.path.exists(data_dir):
+        os.mkdir(data_dir)
+
     sim_dir = os.path.join(sim_top_dir, sim_label)
     if not os.path.exists(sim_dir):
         os.mkdir(sim_dir)
 
-    return output_dir, sim_dir
+    return output_dir, data_dir, sim_dir
 
 ### For config file ###
 def join(loader,node):
@@ -57,6 +61,33 @@ def save_config(sim_dir, sim_label, config_name='default_config'):
     shutil.copy2(config_file, os.path.join(sim_dir,'config-'+sim_label+'.yml'))
     
     print('Config saved!')
+
+def sigmoid(x, A, K, C, B, M):
+    return A+ K/(C+np.exp(-B*(x-M)))
+
+def define_input_freqs(num_ins):
+    A = 1
+    K = 1
+    C = 0.01
+    B = 0.02  #0.02
+    M = 100  #-4.4
+
+    xs = np.linspace(10, 600, num_ins)
+    ys = np.array([sigmoid(x, A, K, C, B, M) for x in xs])
+
+    y0_lin = ys[0]
+    yn_lin = ys[-1]
+    y0_log = 1
+    yn_log = 100
+
+    b = (yn_log - y0_log) / np.log(yn_lin / y0_lin)
+    a = y0_log - b * np.log(y0_lin)
+
+    ys_log = a + b * np.log(ys)
+
+    ys_log = np.append(0, ys_log)
+
+    return np.append(0, ys)
 
 def define_freqs(num_cells):
 
@@ -343,3 +374,66 @@ def plot_traces(simData, pops, pop_cells, stim_delay, stim_dur, sim_dir, sim_lab
 
     fig.tight_layout()
     fig.savefig(os.path.join(sim_dir, f'{sim_label}-cell_traces.png'), dpi=300)
+
+
+def plot_cells(simData, cell_types, n_cells, pops, conns):
+
+    t = np.array(simData['t'])
+    spkid = np.array(simData['spkid'])
+    spkt = np.array(simData['spkt'])
+
+    fig, axs = plt.subplots(len(cell_types), n_cells, figsize=(9*n_cells,5*len(cell_types)))
+    
+    for pop_i, (pop_label, pop_cells) in enumerate(pops.items()):
+
+        cell_type = pop_label.split('_')[0]
+
+        if 'vecstim' in cell_type:
+            continue
+        
+        for cell_i, cell_id in enumerate(pop_cells.cellGids):
+
+            v_soma = list(simData['V_soma'][f'cell_{cell_id}'])
+    
+            if n_cells == 1:
+                ax = axs[pop_i]
+            else:
+                ax = axs[pop_i, cell_i]
+            ax.plot(t, v_soma, color='dimgrey', linewidth=1)
+
+            for conn in conns[cell_id]:
+                pregid = conn['preGid']
+
+                conn_label = conn['label'].split('-')[0].split('_')[1] if '_' in conn['label'] else conn['label']
+
+
+                add_train = False
+                if 'NSA' in conn_label:
+                    color = 'forestgreen'
+                    middle = 15
+                    add_train = True
+                elif 'ANF' in conn_label:
+                    color = 'firebrick'
+                    middle = -10*(int(conn_label.split('F')[1]))
+                    add_train = True
+                else:
+                    add_train = False
+                # elif 'inh' in conn['label']:
+                #     color= 'tab:blue'
+                #     middle = -15
+
+                if add_train:
+                    spike_train = spkt[np.where(spkid == pregid)]
+
+                    if len(spike_train) > 0:
+                        ax.vlines(spike_train, ymin=middle-5, ymax=middle+5, color=color, label=conn_label)
+
+
+                spikes = spkt[np.where(spkid == cell_id)]
+                n_spikes = len(spikes)
+                msf = (n_spikes - 1) / (spikes[-1] - spikes[0]) * 1000 if n_spikes > 0 else 0
+
+                ax.set_title(f'{pop_label} {cell_id} - {msf} spikes')
+                ax.legend()
+
+    return fig
