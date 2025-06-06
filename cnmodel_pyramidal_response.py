@@ -11,6 +11,8 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from neuron import h
 import multiprocessing as mp
+import yaml
+
 
 class CNSoundStim(Protocol):
     def __init__(self, seed, temp=34.0, dt=0.025, hearing='normal', synapsetype="simple"):
@@ -29,7 +31,7 @@ class CNSoundStim(Protocol):
         # cells are instantiated at this point.
         self.sgc = populations.SGC(model="dummy")
         self.dstellate = populations.DStellate()
-        self.tstellate = populations.TStellate()
+        # self.tstellate = populations.TStellate()
         self.tuberculoventral = populations.Tuberculoventral()
         self.pyramidal = populations.Pyramidal()
 
@@ -37,7 +39,7 @@ class CNSoundStim(Protocol):
             self.sgc,
             self.dstellate,
             self.tuberculoventral,
-            self.tstellate,
+            # self.tstellate,
             self.pyramidal
         ]
         self.populations = OrderedDict([(pop.type, pop) for pop in pops])
@@ -50,13 +52,11 @@ class CNSoundStim(Protocol):
         # This only defines the connections between populations; no synapses are
         # created at this stage.
         self.sgc.connect(
-            self.pyramidal, self.dstellate, self.tuberculoventral, self.tstellate
+            self.pyramidal, self.dstellate, self.tuberculoventral  # , self.tstellate
         )
-        self.dstellate.connect(
-            self.pyramidal, self.tstellate
-        )  # should connect to dstellate as well?
-        self.tuberculoventral.connect(self.pyramidal, self.tstellate) 
-        self.tstellate.connect(self.pyramidal)
+        self.dstellate.connect(self.pyramidal)
+        self.tuberculoventral.connect(self.pyramidal)  #, self.tstellate) 
+        # self.tstellate.connect(self.pyramidal)
 
         # Select cells to record from.
         # At this time, we actually instantiate the selected cells.
@@ -92,20 +92,18 @@ class CNSoundStim(Protocol):
         self.sgc.set_seed(seed2)
 
         self.sgc.set_sound_stim(stim, parallel=False)
-        # TODO: implement hearing loss
         if 'loss' in self.hearing:
             loss_frac = 0.8
-            loss_freq = 24e3
+            loss_freq = 20e3
             sgc_ids = self.sgc.real_cells()
             for sgc_id in sgc_ids:
                 sgc_cell = self.sgc.get_cell(sgc_id)
                 if (sgc_cell.cf > loss_freq) and (len(sgc_cell._spiketrain) > 0):
                     ind_remove = set(random.sample(list(range(len(sgc_cell._spiketrain))), int(loss_frac*len(sgc_cell._spiketrain))))
                     sgc_cell._spiketrain = [n for i, n in enumerate(sgc_cell._spiketrain) if i not in ind_remove]
-            temp = 5
 
         # set up recording vectors
-        for pop in self.pyramidal, self.dstellate, self.tstellate, self.tuberculoventral:  # self.bushy, self.dstellate, self.tstellate, self.tuberculoventral:
+        for pop in self.pyramidal, self.dstellate, self.tuberculoventral:  # self.bushy, self.dstellate, self.tstellate, self.tuberculoventral:
             for ind in pop.real_cells():
                 cell = pop.get_cell(ind)
                 self[cell] = cell.soma(0.5)._ref_v
@@ -234,6 +232,25 @@ class CNSoundStim(Protocol):
             filename += '-loss'
         fig.savefig(os.path.join(output_dir, f'{filename}.png'), dpi=300)
 
+        rm_data = {'freqs': freqs_log,
+                   'levels': levels,
+                   'matrix': matrix}
+        pickle.dump(rm_data, open(os.path.join(output_dir, f'DATA-{filename}.pkl'), 'wb'))
+
+        metadata = {
+            'spont_rate': float(round(spont_rate, 5)),
+            'populations': {'sgc': len(self.sgc.real_cells()),
+                            'dstellate': len(self.dstellate.real_cells()),
+                            'ventral': len(self.tuberculoventral.real_cells()),
+                            'pyramidal': len(self.pyramidal.real_cells())}
+        }
+        # temp = 5
+        filename = os.path.join(output_dir, f'metadata')
+        if 'loss' in self.hearing:
+            filename += '-loss'
+        with open(os.path.join(output_dir, f'{filename}.yml'), 'w') as outfile:
+            yaml.dump(metadata, outfile,)
+
 
 
 def main():
@@ -244,7 +261,7 @@ def main():
     nreps = 1
     fmin = 4e3
     fmax = 32e3
-    octavespacing = 1 / 8.0
+    octavespacing = 1 / 8.0  # 8.0
     n_frequencies = int(np.log2(fmax / fmin) / octavespacing) + 1
     fvals = (
         np.logspace(
@@ -258,7 +275,7 @@ def main():
     )
 
     n_levels = 11
-    levels = np.linspace(20, 100, n_levels)
+    levels = np.linspace(20, 100, n_levels)  # 20, 100, n_levels
 
     print(("Frequencies:", fvals / 1000.0))
     print(("Levels:", levels))
@@ -268,6 +285,8 @@ def main():
     dt = 0.025
     hearing = 'normal'
     syntype = "multisite"
+
+    sim_flag = 'wider_loss'
 
     cwd = os.getcwd() # os.path.dirname(__file__)
     cachepath = os.path.join(cwd, "cache")
@@ -325,7 +344,7 @@ def main():
         print(f'f = {f}, dbspl = {db}')
         results[(f, db, iteration)] = (stim, result)
 
-    fig_dir = os.path.join(cwd, 'output', 'response_maps')
+    fig_dir = os.path.join(cwd, 'output', f'response_maps-{sim_flag}')
     if not os.path.exists(fig_dir):
         os.mkdir(fig_dir)
     prot.plot_results(nreps, results, baseline=stimpar['baseline'], response=stimpar['response'], output_dir=fig_dir)

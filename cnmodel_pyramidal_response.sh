@@ -12,4 +12,4 @@
 module load mamba/latest
 source activate python3_10
 
-python ~/DCN_model/notebooks/cnmodel_pyramidal_response.py
+python ~/DCN_model/cnmodel_pyramidal_response.py
