@@ -14,8 +14,8 @@ import multiprocessing as mp
 import yaml
 
 
-class CNSoundStim(Protocol):
-    def __init__(self, seed, temp=34.0, dt=0.025, hearing='normal', synapsetype="simple", enable_ic=False):
+class CharacterizeNetwork(Protocol):
+    def __init__(self, seed, frequencies, temp=34.0, dt=0.025, hearing='normal', synapsetype="simple", enable_ic=False):
         Protocol.__init__(self)
 
         self.base_data = None
@@ -63,7 +63,7 @@ class CNSoundStim(Protocol):
 
         # Select cells to record from.
         # At this time, we actually instantiate the selected cells.
-        frequencies = [16e3]
+        # frequencies = [16e3]
         cells_per_band = 1
         for f in frequencies:
             pyramidal_cell_ids = self.pyramidal.select(cells_per_band, cf=f, create=True)
@@ -102,36 +102,6 @@ class CNSoundStim(Protocol):
                 if (sgc_cell.cf > loss_freq) and (len(sgc_cell._spiketrain) > 0):
                     ind_remove = set(random.sample(list(range(len(sgc_cell._spiketrain))), int(loss_frac*len(sgc_cell._spiketrain))))
                     sgc_cell._spiketrain = [n for i, n in enumerate(sgc_cell._spiketrain) if i not in ind_remove]
-
-        if self.enable_ic:
-            temp = 5
-
-            response_rate = self.get_response_rate(stim)
-
-            activate_cells = [self.pyramidal.get_cell(self.pyramidal.real_cells()[0])]  # TODO: write function that returns vertical cells 
-
-            self.stim_t = h.Vector()
-            self.stim_id = h.Vector()
-
-            for activate_cell in activate_cells:
-
-                tau2 = 2 if 'pyr' in activate_cell.celltype else 1.5  # or 2 for pyramidal
-                e_syn = h.Exp2Syn(activate_cell.soma(0.5))
-                e_syn.tau2 = tau2
-
-                ns = h.NetStim()
-                ns.interval = 1000/80
-                ns.number = 2e9
-                ns.start = stim.duration * 1000  # in response to sound?
-                ns.noise = 1
-
-                nc = h.NetCon(ns, e_syn)
-                if 'pyr' in activate_cell.celltype:
-                    nc_weight = 0.0001*response_rate if response_rate > 0 else 0
-                else:
-                    nc_weight = 1
-                nc.weight[0] = nc_weight
-                nc.record(self.stim_t, self.stim_id)
 
         # set up recording vectors
         for pop in self.pyramidal, self.dstellate, self.tuberculoventral:  # self.bushy, self.dstellate, self.tstellate, self.tuberculoventral:
@@ -313,7 +283,7 @@ def main():
     fmax = 32e3
     octavespacing = 1 / 8.0  # 8.0
     n_frequencies = int(np.log2(fmax / fmin) / octavespacing) + 1
-    fvals = (
+    cf_fvals = (
         np.logspace(
             np.log2(fmin / 1000.0),
             np.log2(fmax / 1000.0),
@@ -324,24 +294,24 @@ def main():
         * 1000.0
     )
 
-    n_levels = 11
-    levels = np.linspace(20, 100, n_levels)  # 20, 100, n_levels
+    n_levels = 1
+    levels = [40]  #np.linspace(20, 100, n_levels)  # 20, 100, n_levels
 
-    print(("Frequencies:", fvals / 1000.0))
+    print(("Frequencies:", cf_fvals / 1000.0))
     print(("Levels:", levels))
 
     seed = 34657845
     temp = 34.0
     dt = 0.025
     hearing = 'normal'
-    enable_ic = True
-    force_run = True
+    enable_ic = False
+    force_run = False
     syntype = "multisite"
 
-    sim_flag = 'wider_loss'
+    sim_flag = 'network'
 
     cwd = os.getcwd() # os.path.dirname(__file__)
-    cachepath = os.path.join(cwd, "cache")
+    cachepath = os.path.join(cwd, "cache_network")
     if 'loss' in hearing:
         cachepath += '_loss'
     if enable_ic:
@@ -354,16 +324,7 @@ def main():
     if not os.path.exists(fig_dir):
         os.mkdir(fig_dir)
 
-    prot = CNSoundStim(seed=seed, hearing=hearing, synapsetype=syntype, enable_ic=enable_ic)
-
-    if enable_ic:
-        try:
-            filename = f'{len(fvals)}fs_{len(levels)}dbs-response_map'
-            if 'loss' in hearing:
-                filename += '-loss'
-            prot.base_data = pickle.load(open(os.path.join(fig_dir, f'DATA-{filename}.pkl'), 'rb'))
-        except FileNotFoundError:
-            print('Missing simulation data for network without IC')
+    prot = CharacterizeNetwork(seed=seed, frequencies=cf_fvals, hearing=hearing, synapsetype=syntype, enable_ic=enable_ic)
 
     stimpar = {
         "dur": 0.2,
@@ -372,15 +333,15 @@ def main():
         "baseline": [50, 100],
         "response": [100, 140],
     }
+
+    input_fvals = [10e3]
     tasks = []
-    for f in fvals:
+    for f in input_fvals:
         for db in levels:
             for i in range(nreps):
                 tasks.append((f, db, i))
 
     results = {}
-    workers = 1 if not parallel else None
-    tot_runs = len(fvals) * len(levels) * nreps
 
     for i, task in enumerate(tasks):
 
@@ -411,7 +372,7 @@ def main():
         print(f'f = {f}, dbspl = {db}')
         results[(f, db, iteration)] = (stim, result)
 
-    prot.plot_results(nreps, results, baseline=stimpar['baseline'], response=stimpar['response'], output_dir=fig_dir)
+    # prot.plot_results(nreps, results, baseline=stimpar['baseline'], response=stimpar['response'], output_dir=fig_dir)
 
 
 if __name__ == '__main__':
