@@ -15,7 +15,7 @@ import yaml
 
 
 class CharacterizeNetwork(Protocol):
-    def __init__(self, seed, frequencies, temp=34.0, dt=0.025, hearing='normal', synapsetype="simple", enable_ic=False):
+    def __init__(self, seed, frequencies, cells_per_band=1, temp=34.0, dt=0.025, hearing='normal', synapsetype="simple", enable_ic=False):
         Protocol.__init__(self)
 
         self.base_data = None
@@ -64,9 +64,12 @@ class CharacterizeNetwork(Protocol):
         # Select cells to record from.
         # At this time, we actually instantiate the selected cells.
         # frequencies = [16e3]
-        cells_per_band = 1
+        # cells_per_band = 1
+        self.cells_per_band = cells_per_band
+        self.pyramidal_ids_per_band = {}
         for f in frequencies:
-            pyramidal_cell_ids = self.pyramidal.select(cells_per_band, cf=f, create=True)
+            pyramidal_cell_ids = self.pyramidal.select(self.cells_per_band, cf=f, create=True)
+            self.pyramidal_ids_per_band[f] = pyramidal_cell_ids
 
         # Now create the supporting circuitry needed to drive the cells we selected.
         # At this time, cells are created in all populations and automatically
@@ -259,6 +262,58 @@ class CharacterizeNetwork(Protocol):
         with open(os.path.join(output_dir, f'{filename}.yml'), 'w') as outfile:
             yaml.dump(metadata, outfile,)
 
+    def save_stimulus_firing_rates(self, results, response, output_dir):
+
+        results_od = OrderedDict()
+        max_iter = 0
+        stim_order = []
+        freqs = set()
+        levels = set()
+
+        for k, v in list(results.items()):
+
+            f0, dbspl, iteration = k
+            max_iter = max(max_iter, iteration)
+            stim, result = v
+            key = "f0: %0.0f  dBspl: %0.0f" % (f0, dbspl)
+            results_od.setdefault(key, [stim,{}])
+            results_od[key][1][iteration] = result
+            stim_order.append((f0, dbspl))
+            freqs.add(f0)
+            levels.add(dbspl)
+
+        freqs = sorted(list(freqs))
+        levels = sorted(list(levels))
+
+        avg_msfs = {}
+        for stim, iterations in list(results_od.values()):
+
+            stim_avg_msfs  = []
+
+            for vec in list(iterations.values()):
+                temp = 6
+                rep_avg_msfs = []
+
+                for cf, ids in self.pyramidal_ids_per_band.items():
+
+                    msfs = []
+                    for pyr_id in ids:
+                        spkt = vec[('pyramidal', pyr_id)][1]
+                        resp_spkt = spkt[((spkt >= response[0]) & (spkt <= response[1]))]
+
+                        num_spikes = len(resp_spkt)
+                        num_isi = num_spikes - 1 if num_spikes > 0 else 0
+                        msf = num_isi / (resp_spkt[-1] - resp_spkt[0]) * 1000 if num_spikes > 1 else 1
+                        msfs.append(msf)
+                    rep_avg_msfs.append(np.mean(msfs))
+
+                stim_avg_msfs.append(rep_avg_msfs)
+            
+            avg_msfs[stim] = np.average(np.array(stim_avg_msfs), axis=0)
+
+        filepath = os.path.join(output_dir, 'stim_avg_rates.pkl')
+        pickle.dump(avg_msfs, open(filepath, 'wb'))
+
 
     def get_response_rate(self, stim):
 
@@ -278,10 +333,10 @@ def main():
     stims = []
     parallel = True
 
-    nreps = 1
-    fmin = 4e3
-    fmax = 32e3
-    octavespacing = 1 / 8.0  # 8.0
+    nreps = 5
+    fmin = 2e3
+    fmax = 34e3
+    octavespacing = 1 / 64.0  # 8.0
     n_frequencies = int(np.log2(fmax / fmin) / octavespacing) + 1
     cf_fvals = (
         np.logspace(
@@ -294,8 +349,8 @@ def main():
         * 1000.0
     )
 
-    n_levels = 1
-    levels = [40]  #np.linspace(20, 100, n_levels)  # 20, 100, n_levels
+    n_levels = 6
+    levels = [20, 40, 60, 80, 100]  # np.linspace(20, 100, n_levels)  # 20, 100, n_levels
 
     print(("Frequencies:", cf_fvals / 1000.0))
     print(("Levels:", levels))
@@ -306,6 +361,7 @@ def main():
     hearing = 'normal'
     enable_ic = False
     force_run = False
+    cells_per_band = 10
     syntype = "multisite"
 
     sim_flag = 'network'
@@ -324,7 +380,7 @@ def main():
     if not os.path.exists(fig_dir):
         os.mkdir(fig_dir)
 
-    prot = CharacterizeNetwork(seed=seed, frequencies=cf_fvals, hearing=hearing, synapsetype=syntype, enable_ic=enable_ic)
+    prot = CharacterizeNetwork(seed=seed, frequencies=cf_fvals, cells_per_band=cells_per_band, hearing=hearing, synapsetype=syntype, enable_ic=enable_ic)
 
     stimpar = {
         "dur": 0.2,
@@ -356,7 +412,7 @@ def main():
             pip_start=stimpar["start"],
         )
 
-        cachefile = os.path.join(cachepath, f'seed={seed}_f0={f}_dbspl={db}_syntype={syntype}_iter={iteration}')
+        cachefile = os.path.join(cachepath, f'seed={seed}_nfs={len(cf_fvals)}_f0={f}_dbspl={db}_cpb={cells_per_band}_syntype={syntype}_iter={iteration}')
         
         if (not os.path.isfile(cachefile)) or force_run:
             # result = prot.run(f, db, iteration, seed=i)  # parallelize
@@ -372,6 +428,9 @@ def main():
         print(f'f = {f}, dbspl = {db}')
         results[(f, db, iteration)] = (stim, result)
 
+    pickle.dump(results, open(os.path.join(fig_dir, 'results_df.pkl'), 'wb'))
+
+    prot.save_stimulus_firing_rates(results, response=stimpar['response'], output_dir=fig_dir)
     # prot.plot_results(nreps, results, baseline=stimpar['baseline'], response=stimpar['response'], output_dir=fig_dir)
 
 
