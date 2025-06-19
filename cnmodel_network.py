@@ -5,6 +5,7 @@ from collections import OrderedDict
 import os, sys, time
 import pickle
 import random
+import argparse
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -12,6 +13,7 @@ import matplotlib.cm as cm
 from neuron import h
 import multiprocessing as mp
 import yaml
+from scipy.signal import savgol_filter
 
 
 class CharacterizeNetwork(Protocol):
@@ -95,7 +97,7 @@ class CharacterizeNetwork(Protocol):
         random_seed.set_seed(seed1)
         self.sgc.set_seed(seed2)
 
-        self.sgc.set_sound_stim(stim, parallel=False)
+        self.sgc.set_sound_stim(stim, parallel=False, hearing=self.hearing)
         if 'loss' in self.hearing:
             loss_frac = 0.8
             loss_freq = 20e3
@@ -246,22 +248,6 @@ class CharacterizeNetwork(Protocol):
                    'matrix': matrix}
         pickle.dump(rm_data, open(os.path.join(output_dir, f'DATA-{filename}.pkl'), 'wb'))
 
-        metadata = {
-            'spont_rate': float(round(spont_rate, 5)),
-            'populations': {'sgc': len(self.sgc.real_cells()),
-                            'dstellate': len(self.dstellate.real_cells()),
-                            'ventral': len(self.tuberculoventral.real_cells()),
-                            'pyramidal': len(self.pyramidal.real_cells())}
-        }
-        # temp = 5
-        filename = os.path.join(output_dir, f'metadata')
-        if 'loss' in self.hearing:
-            filename += '-loss'
-        if self.enable_ic:
-            filename += '-ic'
-        with open(os.path.join(output_dir, f'{filename}.yml'), 'w') as outfile:
-            yaml.dump(metadata, outfile,)
-
     def save_stimulus_firing_rates(self, results, response, output_dir):
 
         results_od = OrderedDict()
@@ -314,29 +300,75 @@ class CharacterizeNetwork(Protocol):
         filepath = os.path.join(output_dir, 'stim_avg_rates.pkl')
         pickle.dump(avg_msfs, open(filepath, 'wb'))
 
+        metadata = {
+            'populations': {'sgc': len(self.sgc.real_cells()),
+                            'dstellate': len(self.dstellate.real_cells()),
+                            'vertical': len(self.tuberculoventral.real_cells()),
+                            'pyramidal': len(self.pyramidal.real_cells())}
+        }
+        # temp = 5
+        filename = os.path.join(output_dir, f'metadata')
+        if 'loss' in self.hearing:
+            filename += '-loss'
+        if self.enable_ic:
+            filename += '-ic'
+        with open(os.path.join(output_dir, f'{filename}.yml'), 'w') as outfile:
+            yaml.dump(metadata, outfile,)
 
-    def get_response_rate(self, stim):
+        return avg_msfs
 
-        f0 = stim.opts['f0']
-        db = stim.opts['dbspl']
 
-        f0_ind = np.where(self.base_data['freqs'] == f0)[0][0]
-        db_ind = np.where(self.base_data['levels'] == db)[0][0]
+    def plot_stimulus_firing_rates(self, avg_msfs, freqs, output_dir):
 
-        response_rate = self.base_data['matrix'][db_ind, f0_ind]
+        b = (freqs[-1] - freqs[0]) / np.log(freqs[-1] / freqs[0])
+        a = freqs[0] - b * np.log(freqs[0])
+        freqs_log = a + b * np.log(freqs)
 
-        return response_rate
+        fig, axs = plt.subplots(1,1,figsize=(6,5))
+
+        for stim, avg_rates in avg_msfs.items():
+            level = stim.opts['dbspl']
+
+            # axs[i].plot(freqs_log, avg_rates, color='tab:blue')  #, 'o-')
+            axs.plot(freqs_log, savgol_filter(avg_rates, 50, 3), label=f'{level} dB')  #, color='tab:red')
+
+        xspan = len(freqs)//4
+        axs.set_xticks([freqs_log[i] for i in [0, xspan, xspan*2, xspan*3, xspan*4]])
+        axs.set_xticklabels([round(freqs[i]/1000) for i in [0,xspan, xspan*2, xspan*3, xspan*4]])
+        axs.set_xlabel('Characteristic Frequency (kHz)')
+        axs.set_ylabel('Firing Rate (Hz)')
+        axs.legend(loc='upper right')
+
+        title = 'Hearing Loss' if 'loss' in self.hearing else 'Normal Hearing'
+        axs.set_title(title)
+        fig.tight_layout()
+
+        filename = 'pyramidal_response_curve'
+        if 'loss' in self.hearing:
+            filename += '-loss'
+        fig.savefig(os.path.join(output_dir, f'{filename}.png'), dpi=300)
+
 
 
 def main():
 
+    parser = argparse.ArgumentParser(description='run network with array of pyramidal cells spanning frequency range')
+    parser.add_argument('--hearing', type=str, choices=['normal', 'loss'], help='type of hearing')
+    parser.add_argument('-if', '--input_frequency', type=int, help='input sound frequency (Hz)')
+    parser.add_argument('-c', '--cells_per_band', type=int, help='number of pyramidal cells per characteristic frequency')
+    parser.add_argument('-i', '--iterations', type=int, help='number of simulation iterations')
+    parser.add_argument('-f', '--force_run', action='store_true', help='force run cell simulation')
+    parser.add_argument('-ic', '--enable_ic', action='store_true', help='enable inferior colliculus')
+    
+    args = parser.parse_args()
+
     stims = []
     parallel = True
 
-    nreps = 5
+    # nreps = args.iterations
     fmin = 2e3
     fmax = 34e3
-    octavespacing = 1 / 64.0  # 8.0
+    octavespacing = 1 / 16.0  # 8.0
     n_frequencies = int(np.log2(fmax / fmin) / octavespacing) + 1
     cf_fvals = (
         np.logspace(
@@ -348,9 +380,10 @@ def main():
         )
         * 1000.0
     )
+    # cf_fvals = np.array([10e3])
 
     n_levels = 6
-    levels = [20, 40, 60, 80, 100]  # np.linspace(20, 100, n_levels)  # 20, 100, n_levels
+    levels = [40]  # [20, 40, 60, 80, 100]  # np.linspace(20, 100, n_levels)  # 20, 100, n_levels
 
     print(("Frequencies:", cf_fvals / 1000.0))
     print(("Levels:", levels))
@@ -358,29 +391,34 @@ def main():
     seed = 34657845
     temp = 34.0
     dt = 0.025
-    hearing = 'normal'
-    enable_ic = False
-    force_run = False
-    cells_per_band = 10
+    # hearing = args.hearing
+    # enable_ic = False
+    # force_run = False
+    # cells_per_band = args.cells_per_band
     syntype = "multisite"
 
     sim_flag = 'network'
 
     cwd = os.getcwd() # os.path.dirname(__file__)
-    cachepath = os.path.join(cwd, "cache_network")
-    if 'loss' in hearing:
+    cachepath = os.path.join('/scratch/kedoxey', "cache_network")
+    if 'loss' in args.hearing:
         cachepath += '_loss'
-    if enable_ic:
+        sim_flag += '_loss'
+    if args.enable_ic:
         cachepath += '_ic'
+        sim_flag += '_ic'
     print(cachepath)
     if not os.path.isdir(cachepath):
         os.mkdir(cachepath)
 
-    fig_dir = os.path.join(cwd, 'output', f'response_maps-{sim_flag}')
+    sim_dir = os.path.join(cwd, 'output', f'response_maps-{sim_flag}')
+    fig_dir = os.path.join(sim_dir, f'{len(cf_fvals)}cfs_{len(levels)}dbs_{args.input_frequency}if_{args.cells_per_band}cpb_{args.iterations}nreps')
     if not os.path.exists(fig_dir):
         os.mkdir(fig_dir)
 
-    prot = CharacterizeNetwork(seed=seed, frequencies=cf_fvals, cells_per_band=cells_per_band, hearing=hearing, synapsetype=syntype, enable_ic=enable_ic)
+    prot = CharacterizeNetwork(seed=seed, frequencies=cf_fvals, cells_per_band=args.cells_per_band, 
+                               hearing=args.hearing, synapsetype=syntype, enable_ic=args.enable_ic)
+    pickle.dump(prot.pyramidal_ids_per_band, open(os.path.join(fig_dir, 'pyramidal_ids_per_band.pkl'), 'wb'))
 
     stimpar = {
         "dur": 0.2,
@@ -390,11 +428,11 @@ def main():
         "response": [100, 140],
     }
 
-    input_fvals = [10e3]
+    input_fvals = [float(args.input_frequency)]
     tasks = []
     for f in input_fvals:
         for db in levels:
-            for i in range(nreps):
+            for i in range(args.iterations):
                 tasks.append((f, db, i))
 
     results = {}
@@ -412,9 +450,10 @@ def main():
             pip_start=stimpar["start"],
         )
 
-        cachefile = os.path.join(cachepath, f'seed={seed}_nfs={len(cf_fvals)}_f0={f}_dbspl={db}_cpb={cells_per_band}_syntype={syntype}_iter={iteration}')
+        cachefile = os.path.join(cachepath, f'seed={seed}_nfs={len(cf_fvals)}_f0={f}_dbspl={db}_cpb={args.cells_per_band}_syntype={syntype}_iter={iteration}')
+        print(f'cache file exists - {bool(os.path.isfile(cachefile))}')
         
-        if (not os.path.isfile(cachefile)) or force_run:
+        if (not os.path.isfile(cachefile)) or args.force_run:
             # result = prot.run(f, db, iteration, seed=i)  # parallelize
             result = mp.Manager().dict()
             p1 = mp.Process(target=prot.run, args=(stim, i, result))
@@ -430,7 +469,8 @@ def main():
 
     pickle.dump(results, open(os.path.join(fig_dir, 'results_df.pkl'), 'wb'))
 
-    prot.save_stimulus_firing_rates(results, response=stimpar['response'], output_dir=fig_dir)
+    avg_msfs = prot.save_stimulus_firing_rates(results, response=stimpar['response'], output_dir=fig_dir)
+    prot.plot_stimulus_firing_rates(avg_msfs, cf_fvals, fig_dir)
     # prot.plot_results(nreps, results, baseline=stimpar['baseline'], response=stimpar['response'], output_dir=fig_dir)
 
 

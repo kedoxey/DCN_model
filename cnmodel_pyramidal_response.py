@@ -5,17 +5,19 @@ from collections import OrderedDict
 import os, sys, time
 import pickle
 import random
+import argparse
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from neuron import h
 import multiprocessing as mp
+import seaborn as sns
 import yaml
 
 
 class CNSoundStim(Protocol):
-    def __init__(self, seed, temp=34.0, dt=0.025, hearing='normal', synapsetype="simple", enable_ic=False):
+    def __init__(self, seed, characteristic_frequency, temp=34.0, dt=0.025, hearing='normal', synapsetype="simple", enable_ic=False):
         Protocol.__init__(self)
 
         self.base_data = None
@@ -63,10 +65,10 @@ class CNSoundStim(Protocol):
 
         # Select cells to record from.
         # At this time, we actually instantiate the selected cells.
-        frequencies = [16e3]
+        # frequencies = [16e3]
+        self.characteristic_frequency = characteristic_frequency
         cells_per_band = 1
-        for f in frequencies:
-            pyramidal_cell_ids = self.pyramidal.select(cells_per_band, cf=f, create=True)
+        pyramidal_cell_ids = self.pyramidal.select(cells_per_band, cf=self.characteristic_frequency, create=True)
 
         # Now create the supporting circuitry needed to drive the cells we selected.
         # At this time, cells are created in all populations and automatically
@@ -92,16 +94,16 @@ class CNSoundStim(Protocol):
         random_seed.set_seed(seed1)
         self.sgc.set_seed(seed2)
 
-        self.sgc.set_sound_stim(stim, parallel=False)
-        if 'loss' in self.hearing:
-            loss_frac = 0.8
-            loss_freq = 20e3
-            sgc_ids = self.sgc.real_cells()
-            for sgc_id in sgc_ids:
-                sgc_cell = self.sgc.get_cell(sgc_id)
-                if (sgc_cell.cf > loss_freq) and (len(sgc_cell._spiketrain) > 0):
-                    ind_remove = set(random.sample(list(range(len(sgc_cell._spiketrain))), int(loss_frac*len(sgc_cell._spiketrain))))
-                    sgc_cell._spiketrain = [n for i, n in enumerate(sgc_cell._spiketrain) if i not in ind_remove]
+        self.sgc.set_sound_stim(stim, parallel=False, hearing=self.hearing)
+        # if 'loss' in self.hearing:
+        #     loss_frac = 0.8
+        #     loss_freq = 20e3
+        #     sgc_ids = self.sgc.real_cells()
+        #     for sgc_id in sgc_ids:
+        #         sgc_cell = self.sgc.get_cell(sgc_id)
+        #         if (sgc_cell.cf > loss_freq) and (len(sgc_cell._spiketrain) > 0):
+        #             ind_remove = set(random.sample(list(range(len(sgc_cell._spiketrain))), int(loss_frac*len(sgc_cell._spiketrain))))
+        #             sgc_cell._spiketrain = [n for i, n in enumerate(sgc_cell._spiketrain) if i not in ind_remove]
 
         if self.enable_ic:
             temp = 5
@@ -118,7 +120,6 @@ class CNSoundStim(Protocol):
                 tau2 = 2 if 'pyr' in activate_cell.celltype else 1.5  # or 2 for pyramidal
                 e_syn = h.Exp2Syn(activate_cell.soma(0.5))
                 e_syn.tau2 = tau2
-
                 ns = h.NetStim()
                 ns.interval = 1000/80
                 ns.number = 2e9
@@ -199,6 +200,7 @@ class CNSoundStim(Protocol):
             levels.add(dbspl)
         
         # results = results_od
+        pickle.dump(results_od, open(os.path.join(output_dir, f'{len(freqs)}fs_{len(levels)}dbs_{self.characteristic_frequency}cf-results_od.pkl'), 'wb'))
 
         freqs = sorted(list(freqs))
         levels = sorted(list(levels))
@@ -244,8 +246,12 @@ class CNSoundStim(Protocol):
         freqs_log = a + b * np.log(freqs)
 
         fig, axs = plt.subplots(1,1,figsize=(5,4))
+        
+        cmap = sns.color_palette("icefire", as_cmap=True)
 
-        im = axs.pcolormesh(freqs_log, levels, matrix, cmap=cm.viridis)  # TODO: change colormap
+        matrix_norm = 2*((matrix - np.min(matrix))/(np.max(matrix) - np.min(matrix))) - 1
+
+        im = axs.pcolormesh(freqs_log, levels, matrix_norm, cmap=cmap, vmin=-1, vmax=1)  # TODO: change colormap
         # axs.invert_yaxis()
         axs.set_xlabel('Frequency (kHz)')
         axs.set_ylabel('Sound Level (dBSPL)')
@@ -258,9 +264,9 @@ class CNSoundStim(Protocol):
             title += ' with IC'
         axs.set_title(title)
 
-        fig.colorbar(im)
+        fig.colorbar(im, ticks=[-1,0,1])
         fig.tight_layout()
-        filename = f'{len(freqs)}fs_{len(levels)}dbs-response_map'
+        filename = f'{len(freqs)}fs_{len(levels)}dbs_{self.characteristic_frequency}cf-response_map'
         if 'loss' in self.hearing:
             filename += '-loss'
         if self.enable_ic:
@@ -281,7 +287,7 @@ class CNSoundStim(Protocol):
                             'pyramidal': len(self.pyramidal.real_cells())}
         }
         # temp = 5
-        filename = os.path.join(output_dir, f'metadata')
+        filename = os.path.join(output_dir, f'{len(freqs)}fs_{len(levels)}dbs_{self.characteristic_frequency}cf-metadata')
         if 'loss' in self.hearing:
             filename += '-loss'
         if self.enable_ic:
@@ -305,10 +311,18 @@ class CNSoundStim(Protocol):
 
 def main():
 
+    parser = argparse.ArgumentParser(description='run network with single pyramidal cell for various sound levels and frequencies')
+    parser.add_argument('--hearing', type=str, choices=['normal', 'loss'], help='type of hearing')
+    parser.add_argument('-i', '--iterations', type=int, help='number of simulation iterations')
+    parser.add_argument('-cf', '--characteristic_frequency', type=int, help='characteristic frequency (Hz) of pyramidal cell')
+    parser.add_argument('-f', '--force_run', action='store_true', help='force run cell simulation')
+    parser.add_argument('-ic', '--include_ic', action='store_true', help='include inferior colliculus')
+    
+    args = parser.parse_args()
+
     stims = []
     parallel = True
 
-    nreps = 1
     fmin = 4e3
     fmax = 32e3
     octavespacing = 1 / 8.0  # 8.0
@@ -333,19 +347,21 @@ def main():
     seed = 34657845
     temp = 34.0
     dt = 0.025
-    hearing = 'normal'
-    enable_ic = True
-    force_run = True
+    # hearing = 'normal'
+    # enable_ic = False
+    # force_run = False
     syntype = "multisite"
 
-    sim_flag = 'wider_loss'
+    sim_flag = 'single_cell'
 
     cwd = os.getcwd() # os.path.dirname(__file__)
-    cachepath = os.path.join(cwd, "cache")
-    if 'loss' in hearing:
-        cachepath += '_loss'
-    if enable_ic:
+    cachepath = os.path.join('/scratch/kedoxey', "cache")
+    if 'loss' in args.hearing:
+        cachepath += '_loss-m2'
+        sim_flag += '_loss-m2'
+    if args.include_ic:
         cachepath += '_ic'
+        sim_flag += '_ic'
     print(cachepath)
     if not os.path.isdir(cachepath):
         os.mkdir(cachepath)
@@ -354,12 +370,13 @@ def main():
     if not os.path.exists(fig_dir):
         os.mkdir(fig_dir)
 
-    prot = CNSoundStim(seed=seed, hearing=hearing, synapsetype=syntype, enable_ic=enable_ic)
+    prot = CNSoundStim(seed=seed, characteristic_frequency=args.characteristic_frequency, hearing=args.hearing, 
+                       synapsetype=syntype, enable_ic=args.include_ic)
 
-    if enable_ic:
+    if args.include_ic:
         try:
             filename = f'{len(fvals)}fs_{len(levels)}dbs-response_map'
-            if 'loss' in hearing:
+            if 'loss' in args.hearing:
                 filename += '-loss'
             prot.base_data = pickle.load(open(os.path.join(fig_dir, f'DATA-{filename}.pkl'), 'rb'))
         except FileNotFoundError:
@@ -375,12 +392,12 @@ def main():
     tasks = []
     for f in fvals:
         for db in levels:
-            for i in range(nreps):
+            for i in range(args.iterations):
                 tasks.append((f, db, i))
 
     results = {}
     workers = 1 if not parallel else None
-    tot_runs = len(fvals) * len(levels) * nreps
+    tot_runs = len(fvals) * len(levels) * args.iterations
 
     for i, task in enumerate(tasks):
 
@@ -395,9 +412,9 @@ def main():
             pip_start=stimpar["start"],
         )
 
-        cachefile = os.path.join(cachepath, f'seed={seed}_f0={f}_dbspl={db}_syntype={syntype}_iter={iteration}')
+        cachefile = os.path.join(cachepath, f'seed={seed}_f0={f}_dbspl={db}_cf={args.characteristic_frequency}_syntype={syntype}_iter={iteration}')
         
-        if (not os.path.isfile(cachefile)) or force_run:
+        if (not os.path.isfile(cachefile)) or args.force_run:
             # result = prot.run(f, db, iteration, seed=i)  # parallelize
             result = mp.Manager().dict()
             p1 = mp.Process(target=prot.run, args=(stim, i, result))
@@ -411,7 +428,7 @@ def main():
         print(f'f = {f}, dbspl = {db}')
         results[(f, db, iteration)] = (stim, result)
 
-    prot.plot_results(nreps, results, baseline=stimpar['baseline'], response=stimpar['response'], output_dir=fig_dir)
+    prot.plot_results(args.iterations, results, baseline=stimpar['baseline'], response=stimpar['response'], output_dir=fig_dir)
 
 
 if __name__ == '__main__':
