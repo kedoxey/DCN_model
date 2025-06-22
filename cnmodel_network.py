@@ -17,7 +17,7 @@ from scipy.signal import savgol_filter
 
 
 class CharacterizeNetwork(Protocol):
-    def __init__(self, seed, frequencies, cells_per_band=1, temp=34.0, dt=0.025, hearing='normal', synapsetype="simple", enable_ic=False):
+    def __init__(self, seed, frequencies, cells_per_band=1, loss_lim=99e3, temp=34.0, dt=0.025, hearing='normal', synapsetype="simple", enable_ic=False):
         Protocol.__init__(self)
 
         self.base_data = None
@@ -28,6 +28,7 @@ class CharacterizeNetwork(Protocol):
 
         self.hearing = hearing  # normal or loss
         self.enable_ic = enable_ic
+        self.loss_lim = loss_lim
 
         # Seed now to ensure network generation is stable
         random_seed.set_seed(seed)
@@ -97,16 +98,16 @@ class CharacterizeNetwork(Protocol):
         random_seed.set_seed(seed1)
         self.sgc.set_seed(seed2)
 
-        self.sgc.set_sound_stim(stim, parallel=False, hearing=self.hearing)
-        if 'loss' in self.hearing:
-            loss_frac = 0.8
-            loss_freq = 20e3
-            sgc_ids = self.sgc.real_cells()
-            for sgc_id in sgc_ids:
-                sgc_cell = self.sgc.get_cell(sgc_id)
-                if (sgc_cell.cf > loss_freq) and (len(sgc_cell._spiketrain) > 0):
-                    ind_remove = set(random.sample(list(range(len(sgc_cell._spiketrain))), int(loss_frac*len(sgc_cell._spiketrain))))
-                    sgc_cell._spiketrain = [n for i, n in enumerate(sgc_cell._spiketrain) if i not in ind_remove]
+        self.sgc.set_sound_stim(stim, parallel=False, hearing=self.hearing, loss_lim=self.loss_lim)
+        # if 'loss' in self.hearing:
+        #     loss_frac = 0.95
+        #     loss_freq = 30e3
+        #     sgc_ids = self.sgc.real_cells()
+        #     for sgc_id in sgc_ids:
+        #         sgc_cell = self.sgc.get_cell(sgc_id)
+        #         if (sgc_cell.cf > loss_freq) and (len(sgc_cell._spiketrain) > 0):
+        #             ind_remove = set(random.sample(list(range(len(sgc_cell._spiketrain))), int(loss_frac*len(sgc_cell._spiketrain))))
+        #             sgc_cell._spiketrain = [n for i, n in enumerate(sgc_cell._spiketrain) if i not in ind_remove]
 
         # set up recording vectors
         for pop in self.pyramidal, self.dstellate, self.tuberculoventral:  # self.bushy, self.dstellate, self.tstellate, self.tuberculoventral:
@@ -125,7 +126,7 @@ class CharacterizeNetwork(Protocol):
             h.fadvance()
             now = time.time()
             if now - last_update > 1.0:
-                print("%0.2f / %0.2f" % (h.t, h.tstop))
+                print(("%0.2f / %0.2f" % (h.t, h.tstop)))
                 last_update = now
 
         # record vsoma and spike times for all cells
@@ -280,7 +281,7 @@ class CharacterizeNetwork(Protocol):
                 temp = 6
                 rep_avg_msfs = []
 
-                for cf, ids in self.pyramidal_ids_per_band.items():
+                for cf, ids in list(self.pyramidal_ids_per_band.items()):
 
                     msfs = []
                     for pyr_id in ids:
@@ -324,17 +325,17 @@ class CharacterizeNetwork(Protocol):
         a = freqs[0] - b * np.log(freqs[0])
         freqs_log = a + b * np.log(freqs)
 
-        fig, axs = plt.subplots(1,1,figsize=(6,5))
+        fig, axs = plt.subplots(1,1,figsize=(10,5))
 
-        for stim, avg_rates in avg_msfs.items():
+        for stim, avg_rates in list(avg_msfs.items()):
             level = stim.opts['dbspl']
 
             # axs[i].plot(freqs_log, avg_rates, color='tab:blue')  #, 'o-')
-            axs.plot(freqs_log, savgol_filter(avg_rates, 50, 3), label=f'{level} dB')  #, color='tab:red')
+            axs.plot(freqs, savgol_filter(avg_rates, 50, 3), label=f'{level} dB')  #, color='tab:red')
 
         xspan = len(freqs)//4
-        axs.set_xticks([freqs_log[i] for i in [0, xspan, xspan*2, xspan*3, xspan*4]])
-        axs.set_xticklabels([round(freqs[i]/1000) for i in [0,xspan, xspan*2, xspan*3, xspan*4]])
+        axs.set_xticks([freqs[i] for i in [0, xspan, xspan*2, xspan*3, xspan*4]])
+        # axs.set_xticklabels([round(freqs[i]/1000) for i in [0,xspan, xspan*2, xspan*3, xspan*4]])
         axs.set_xlabel('Characteristic Frequency (kHz)')
         axs.set_ylabel('Firing Rate (Hz)')
         axs.legend(loc='upper right')
@@ -354,6 +355,7 @@ def main():
 
     parser = argparse.ArgumentParser(description='run network with array of pyramidal cells spanning frequency range')
     parser.add_argument('--hearing', type=str, choices=['normal', 'loss'], help='type of hearing')
+    parser.add_argument('--loss_limit', type=int, default=99e3, help='lower limit for hearing loss (Hz) - default=None')
     parser.add_argument('-if', '--input_frequency', type=int, help='input sound frequency (Hz)')
     parser.add_argument('-c', '--cells_per_band', type=int, help='number of pyramidal cells per characteristic frequency')
     parser.add_argument('-i', '--iterations', type=int, help='number of simulation iterations')
@@ -366,9 +368,9 @@ def main():
     parallel = True
 
     # nreps = args.iterations
-    fmin = 2e3
-    fmax = 34e3
-    octavespacing = 1 / 16.0  # 8.0
+    fmin = 4e3
+    fmax = 40e3
+    octavespacing = 1 / 64.0  # 16 -> 66, 32 -> , 64 -> 262
     n_frequencies = int(np.log2(fmax / fmin) / octavespacing) + 1
     cf_fvals = (
         np.logspace(
@@ -402,8 +404,8 @@ def main():
     cwd = os.getcwd() # os.path.dirname(__file__)
     cachepath = os.path.join('/scratch/kedoxey', "cache_network")
     if 'loss' in args.hearing:
-        cachepath += '_loss'
-        sim_flag += '_loss'
+        cachepath += f'_{args.loss_limit}loss-m1_80'
+        sim_flag += f'_{args.loss_limit}loss-m1_80'
     if args.enable_ic:
         cachepath += '_ic'
         sim_flag += '_ic'
@@ -412,12 +414,15 @@ def main():
         os.mkdir(cachepath)
 
     sim_dir = os.path.join(cwd, 'output', f'response_maps-{sim_flag}')
+    if not os.path.exists(sim_dir):
+        os.mkdir(sim_dir)
     fig_dir = os.path.join(sim_dir, f'{len(cf_fvals)}cfs_{len(levels)}dbs_{args.input_frequency}if_{args.cells_per_band}cpb_{args.iterations}nreps')
     if not os.path.exists(fig_dir):
         os.mkdir(fig_dir)
 
+    # loss_lim=args.loss_limit, 
     prot = CharacterizeNetwork(seed=seed, frequencies=cf_fvals, cells_per_band=args.cells_per_band, 
-                               hearing=args.hearing, synapsetype=syntype, enable_ic=args.enable_ic)
+                               hearing=args.hearing, loss_lim=args.loss_limit, synapsetype=syntype, enable_ic=args.enable_ic)
     pickle.dump(prot.pyramidal_ids_per_band, open(os.path.join(fig_dir, 'pyramidal_ids_per_band.pkl'), 'wb'))
 
     stimpar = {
@@ -454,6 +459,7 @@ def main():
         print(f'cache file exists - {bool(os.path.isfile(cachefile))}')
         
         if (not os.path.isfile(cachefile)) or args.force_run:
+            print(f'running - f = {f}, dbspl = {db}')
             # result = prot.run(f, db, iteration, seed=i)  # parallelize
             result = mp.Manager().dict()
             p1 = mp.Process(target=prot.run, args=(stim, i, result))
@@ -462,9 +468,9 @@ def main():
             result = dict(result)
             pickle.dump(result, open(cachefile, 'wb'))
         else:
+            print(f'loading - f = {f}, dbspl = {db}')
             result = pickle.load(open(cachefile, 'rb'))
         
-        print(f'f = {f}, dbspl = {db}')
         results[(f, db, iteration)] = (stim, result)
 
     pickle.dump(results, open(os.path.join(fig_dir, 'results_df.pkl'), 'wb'))

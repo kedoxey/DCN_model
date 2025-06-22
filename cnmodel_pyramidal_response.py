@@ -96,7 +96,7 @@ class CNSoundStim(Protocol):
 
         self.sgc.set_sound_stim(stim, parallel=False, hearing=self.hearing)
         # if 'loss' in self.hearing:
-        #     loss_frac = 0.8
+        #     loss_frac = 0.95
         #     loss_freq = 20e3
         #     sgc_ids = self.sgc.real_cells()
         #     for sgc_id in sgc_ids:
@@ -104,35 +104,6 @@ class CNSoundStim(Protocol):
         #         if (sgc_cell.cf > loss_freq) and (len(sgc_cell._spiketrain) > 0):
         #             ind_remove = set(random.sample(list(range(len(sgc_cell._spiketrain))), int(loss_frac*len(sgc_cell._spiketrain))))
         #             sgc_cell._spiketrain = [n for i, n in enumerate(sgc_cell._spiketrain) if i not in ind_remove]
-
-        if self.enable_ic:
-            temp = 5
-
-            response_rate = self.get_response_rate(stim)
-
-            activate_cells = [self.pyramidal.get_cell(self.pyramidal.real_cells()[0])]  # TODO: write function that returns vertical cells 
-
-            self.stim_t = h.Vector()
-            self.stim_id = h.Vector()
-
-            for activate_cell in activate_cells:
-
-                tau2 = 2 if 'pyr' in activate_cell.celltype else 1.5  # or 2 for pyramidal
-                e_syn = h.Exp2Syn(activate_cell.soma(0.5))
-                e_syn.tau2 = tau2
-                ns = h.NetStim()
-                ns.interval = 1000/80
-                ns.number = 2e9
-                ns.start = stim.duration * 1000  # in response to sound?
-                ns.noise = 1
-
-                nc = h.NetCon(ns, e_syn)
-                if 'pyr' in activate_cell.celltype:
-                    nc_weight = 0.0001*response_rate if response_rate > 0 else 0
-                else:
-                    nc_weight = 1
-                nc.weight[0] = nc_weight
-                nc.record(self.stim_t, self.stim_id)
 
         # set up recording vectors
         for pop in self.pyramidal, self.dstellate, self.tuberculoventral:  # self.bushy, self.dstellate, self.tstellate, self.tuberculoventral:
@@ -151,7 +122,7 @@ class CNSoundStim(Protocol):
             h.fadvance()
             now = time.time()
             if now - last_update > 1.0:
-                print("%0.2f / %0.2f" % (h.t, h.tstop))
+                print(("%0.2f / %0.2f" % (h.t, h.tstop)))
                 last_update = now
 
         # record vsoma and spike times for all cells
@@ -357,8 +328,8 @@ def main():
     cwd = os.getcwd() # os.path.dirname(__file__)
     cachepath = os.path.join('/scratch/kedoxey', "cache")
     if 'loss' in args.hearing:
-        cachepath += '_loss-m2'
-        sim_flag += '_loss-m2'
+        cachepath += '_loss-m1_95'
+        sim_flag += '_loss-m1_95'
     if args.include_ic:
         cachepath += '_ic'
         sim_flag += '_ic'
@@ -415,6 +386,7 @@ def main():
         cachefile = os.path.join(cachepath, f'seed={seed}_f0={f}_dbspl={db}_cf={args.characteristic_frequency}_syntype={syntype}_iter={iteration}')
         
         if (not os.path.isfile(cachefile)) or args.force_run:
+            print(f'running - f = {f}, dbspl = {db}')
             # result = prot.run(f, db, iteration, seed=i)  # parallelize
             result = mp.Manager().dict()
             p1 = mp.Process(target=prot.run, args=(stim, i, result))
@@ -423,9 +395,9 @@ def main():
             result = dict(result)
             pickle.dump(result, open(cachefile, 'wb'))
         else:
+            print(f'loading - f = {f}, dbspl = {db}')
             result = pickle.load(open(cachefile, 'rb'))
-        
-        print(f'f = {f}, dbspl = {db}')
+
         results[(f, db, iteration)] = (stim, result)
 
     prot.plot_results(args.iterations, results, baseline=stimpar['baseline'], response=stimpar['response'], output_dir=fig_dir)
