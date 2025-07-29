@@ -17,7 +17,7 @@ from scipy.signal import savgol_filter
 
 
 class CharacterizeNetwork(Protocol):
-    def __init__(self, seed, frequencies, cells_per_band=1, loss_lim=99e3, temp=34.0, dt=0.025, hearing='normal', synapsetype="simple", enable_ic=False):
+    def __init__(self, seed, frequencies, cells_per_band=1, loss_limit=99e3, temp=34.0, dt=0.025, hearing='normal', synapsetype="simple", enable_ic=False):
         Protocol.__init__(self)
 
         self.base_data = None
@@ -28,18 +28,23 @@ class CharacterizeNetwork(Protocol):
 
         self.hearing = hearing  # normal or loss
         self.enable_ic = enable_ic
-        self.loss_lim = loss_lim
+        self.loss_limit = loss_limit
 
         # Seed now to ensure network generation is stable
         random_seed.set_seed(seed)
         # Create cell populations.
         # This creates a complete set of _virtual_ cells for each population. No
         # cells are instantiated at this point.
-        self.sgc = populations.SGC(model="dummy")
+        self.sgc = populations.SGC(model="dummy", hearing=self.hearing, loss_limit=self.loss_limit)
         self.dstellate = populations.DStellate()
         # self.tstellate = populations.TStellate()
-        self.tuberculoventral = populations.Tuberculoventral()
-        self.pyramidal = populations.Pyramidal()
+        if self.enable_ic:
+            self.pyramidal = populations.Pyramidal(synapsetype='simple')
+            self.tuberculoventral = populations.Tuberculoventral(synapsetype='simple')
+            self.ic = populations.IC()
+        else:
+            self.pyramidal = populations.Pyramidal()
+            self.tuberculoventral = populations.Tuberculoventral()
 
         pops = [
             self.sgc,
@@ -48,6 +53,8 @@ class CharacterizeNetwork(Protocol):
             # self.tstellate,
             self.pyramidal
         ]
+        if self.enable_ic:
+            pops.append(self.ic)
         self.populations = OrderedDict([(pop.type, pop) for pop in pops])
 
         # set synapse type to use in the sgc population - simple is fast, multisite is slower
@@ -60,9 +67,13 @@ class CharacterizeNetwork(Protocol):
         self.sgc.connect(
             self.pyramidal, self.dstellate, self.tuberculoventral  # , self.tstellate
         )
-        self.dstellate.connect(self.pyramidal)
+        self.dstellate.connect(self.pyramidal, self.tuberculoventral)
         self.tuberculoventral.connect(self.pyramidal)  #, self.tstellate) 
         # self.tstellate.connect(self.pyramidal)
+
+        if self.enable_ic:
+            self.pyramidal.connect(self.ic)
+            self.ic.connect(self.pyramidal, self.tuberculoventral)
 
         # Select cells to record from.
         # At this time, we actually instantiate the selected cells.
@@ -98,16 +109,7 @@ class CharacterizeNetwork(Protocol):
         random_seed.set_seed(seed1)
         self.sgc.set_seed(seed2)
 
-        self.sgc.set_sound_stim(stim, parallel=False, hearing=self.hearing, loss_lim=self.loss_lim)
-        # if 'loss' in self.hearing:
-        #     loss_frac = 0.95
-        #     loss_freq = 30e3
-        #     sgc_ids = self.sgc.real_cells()
-        #     for sgc_id in sgc_ids:
-        #         sgc_cell = self.sgc.get_cell(sgc_id)
-        #         if (sgc_cell.cf > loss_freq) and (len(sgc_cell._spiketrain) > 0):
-        #             ind_remove = set(random.sample(list(range(len(sgc_cell._spiketrain))), int(loss_frac*len(sgc_cell._spiketrain))))
-        #             sgc_cell._spiketrain = [n for i, n in enumerate(sgc_cell._spiketrain) if i not in ind_remove]
+        self.sgc.set_sound_stim(stim, parallel=False)
 
         # set up recording vectors
         for pop in self.pyramidal, self.dstellate, self.tuberculoventral:  # self.bushy, self.dstellate, self.tstellate, self.tuberculoventral:
@@ -307,6 +309,8 @@ class CharacterizeNetwork(Protocol):
                             'vertical': len(self.tuberculoventral.real_cells()),
                             'pyramidal': len(self.pyramidal.real_cells())}
         }
+        if self.enable_ic:
+            metadata['populations']['ic'] = len(self.ic.real_cells())
         # temp = 5
         filename = os.path.join(output_dir, f'metadata')
         if 'loss' in self.hearing:
@@ -331,7 +335,7 @@ class CharacterizeNetwork(Protocol):
             level = stim.opts['dbspl']
 
             # axs[i].plot(freqs_log, avg_rates, color='tab:blue')  #, 'o-')
-            axs.plot(freqs, savgol_filter(avg_rates, 50, 3), label=f'{level} dB')  #, color='tab:red')
+            axs.plot(freqs, avg_rates, label=f'{level} dB')  #, color='tab:red')
 
         xspan = len(freqs)//4
         axs.set_xticks([freqs[i] for i in [0, xspan, xspan*2, xspan*3, xspan*4]])
@@ -370,7 +374,7 @@ def main():
     # nreps = args.iterations
     fmin = 4e3
     fmax = 40e3
-    octavespacing = 1 / 64.0  # 16 -> 66, 32 -> , 64 -> 262
+    octavespacing = 1 / 200.0  # 16 -> 66, 32 -> 107, 64 -> 213, 200 -> 665
     n_frequencies = int(np.log2(fmax / fmin) / octavespacing) + 1
     cf_fvals = (
         np.logspace(
@@ -385,7 +389,7 @@ def main():
     # cf_fvals = np.array([10e3])
 
     n_levels = 6
-    levels = [40]  # [20, 40, 60, 80, 100]  # np.linspace(20, 100, n_levels)  # 20, 100, n_levels
+    levels = [60]  # [20, 40, 60, 80, 100]  # np.linspace(20, 100, n_levels)  # 20, 100, n_levels
 
     print(("Frequencies:", cf_fvals / 1000.0))
     print(("Levels:", levels))
@@ -399,13 +403,13 @@ def main():
     # cells_per_band = args.cells_per_band
     syntype = "multisite"
 
-    sim_flag = 'network'
+    sim_flag = 'network_ds2v'
 
     cwd = os.getcwd() # os.path.dirname(__file__)
     cachepath = os.path.join('/scratch/kedoxey', "cache_network")
     if 'loss' in args.hearing:
-        cachepath += f'_{args.loss_limit}loss-m1_80'
-        sim_flag += f'_{args.loss_limit}loss-m1_80'
+        cachepath += f'_{args.loss_limit}loss-m3_60'
+        sim_flag += f'_{args.loss_limit}loss-m3_60'
     if args.enable_ic:
         cachepath += '_ic'
         sim_flag += '_ic'
@@ -422,15 +426,16 @@ def main():
 
     # loss_lim=args.loss_limit, 
     prot = CharacterizeNetwork(seed=seed, frequencies=cf_fvals, cells_per_band=args.cells_per_band, 
-                               hearing=args.hearing, loss_lim=args.loss_limit, synapsetype=syntype, enable_ic=args.enable_ic)
+                               hearing=args.hearing, loss_limit=args.loss_limit, 
+                               synapsetype=syntype, enable_ic=args.enable_ic)
     pickle.dump(prot.pyramidal_ids_per_band, open(os.path.join(fig_dir, 'pyramidal_ids_per_band.pkl'), 'wb'))
 
     stimpar = {
-        "dur": 0.2,
-        "pip": 0.04,
+        "dur": 0.26,
+        "pip": 0.1,
         "start": [0.1],
         "baseline": [50, 100],
-        "response": [100, 140],
+        "response": [100, 200],
     }
 
     input_fvals = [float(args.input_frequency)]

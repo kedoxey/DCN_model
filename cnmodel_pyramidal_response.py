@@ -17,7 +17,7 @@ import yaml
 
 
 class CNSoundStim(Protocol):
-    def __init__(self, seed, characteristic_frequency, temp=34.0, dt=0.025, hearing='normal', synapsetype="simple", enable_ic=False):
+    def __init__(self, seed, characteristic_frequency, temp=34.0, dt=0.025, hearing='normal', loss_limit=99e3, synapsetype="simple", enable_ic=False):
         Protocol.__init__(self)
 
         self.base_data = None
@@ -27,6 +27,7 @@ class CNSoundStim(Protocol):
         self.dt = dt
 
         self.hearing = hearing  # normal or loss
+        self.loss_limit = loss_limit
         self.enable_ic = enable_ic
 
         # Seed now to ensure network generation is stable
@@ -34,7 +35,7 @@ class CNSoundStim(Protocol):
         # Create cell populations.
         # This creates a complete set of _virtual_ cells for each population. No
         # cells are instantiated at this point.
-        self.sgc = populations.SGC(model="dummy")
+        self.sgc = populations.SGC(model="dummy", hearing=self.hearing, loss_limit=self.loss_limit)
         self.dstellate = populations.DStellate()
         # self.tstellate = populations.TStellate()
         self.tuberculoventral = populations.Tuberculoventral()
@@ -94,7 +95,7 @@ class CNSoundStim(Protocol):
         random_seed.set_seed(seed1)
         self.sgc.set_seed(seed2)
 
-        self.sgc.set_sound_stim(stim, parallel=False, hearing=self.hearing)
+        self.sgc.set_sound_stim(stim, parallel=False)  #, hearing=self.hearing)
         # if 'loss' in self.hearing:
         #     loss_frac = 0.95
         #     loss_freq = 20e3
@@ -222,7 +223,7 @@ class CNSoundStim(Protocol):
 
         matrix_norm = 2*((matrix - np.min(matrix))/(np.max(matrix) - np.min(matrix))) - 1
 
-        im = axs.pcolormesh(freqs_log, levels, matrix_norm, cmap=cmap, vmin=-1, vmax=1)  # TODO: change colormap
+        im = axs.pcolormesh(freqs_log, levels, matrix, cmap=cmap)  #, vmin=-1, vmax=1)  # TODO: change colormap
         # axs.invert_yaxis()
         axs.set_xlabel('Frequency (kHz)')
         axs.set_ylabel('Sound Level (dBSPL)')
@@ -235,7 +236,7 @@ class CNSoundStim(Protocol):
             title += ' with IC'
         axs.set_title(title)
 
-        fig.colorbar(im, ticks=[-1,0,1])
+        fig.colorbar(im)  #, ticks=[-1,0,1])
         fig.tight_layout()
         filename = f'{len(freqs)}fs_{len(levels)}dbs_{self.characteristic_frequency}cf-response_map'
         if 'loss' in self.hearing:
@@ -284,6 +285,7 @@ def main():
 
     parser = argparse.ArgumentParser(description='run network with single pyramidal cell for various sound levels and frequencies')
     parser.add_argument('--hearing', type=str, choices=['normal', 'loss'], help='type of hearing')
+    parser.add_argument('--loss_limit', default=99e3, type=int, help='lower frequency limit for hearing loss')
     parser.add_argument('-i', '--iterations', type=int, help='number of simulation iterations')
     parser.add_argument('-cf', '--characteristic_frequency', type=int, help='characteristic frequency (Hz) of pyramidal cell')
     parser.add_argument('-f', '--force_run', action='store_true', help='force run cell simulation')
@@ -323,13 +325,13 @@ def main():
     # force_run = False
     syntype = "multisite"
 
-    sim_flag = 'single_cell'
+    sim_flag = 'single_cell-longerstim'
 
     cwd = os.getcwd() # os.path.dirname(__file__)
     cachepath = os.path.join('/scratch/kedoxey', "cache")
     if 'loss' in args.hearing:
-        cachepath += '_loss-m1_95'
-        sim_flag += '_loss-m1_95'
+        cachepath += '_loss-m3_60'
+        sim_flag += '_loss-m3_60'
     if args.include_ic:
         cachepath += '_ic'
         sim_flag += '_ic'
@@ -342,7 +344,7 @@ def main():
         os.mkdir(fig_dir)
 
     prot = CNSoundStim(seed=seed, characteristic_frequency=args.characteristic_frequency, hearing=args.hearing, 
-                       synapsetype=syntype, enable_ic=args.include_ic)
+                       loss_limit=args.loss_limit, synapsetype=syntype, enable_ic=args.include_ic)
 
     if args.include_ic:
         try:
@@ -354,12 +356,13 @@ def main():
             print('Missing simulation data for network without IC')
 
     stimpar = {
-        "dur": 0.2,
-        "pip": 0.04,
+        "dur": 0.26,
+        "pip": 0.1,
         "start": [0.1],
         "baseline": [50, 100],
-        "response": [100, 140],
+        "response": [100, 200],
     }
+
     tasks = []
     for f in fvals:
         for db in levels:

@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import os
 import yaml
 import numpy as np
-import model_helpers as mh
+from . import model_helpers as mh
 import argparse as ap
 from neuron import h, load_mechanisms
 from netpyne import specs, sim
@@ -19,7 +19,7 @@ def run_sim(config_name, *batch_params):
     ### Import simulation config ###
     params = ap.Namespace(**mh.load_config(config_name))
 
-    for batch_param, batch_value in batch_params[0].items():
+    for batch_param, batch_value in list(batch_params[0].items()):
         setattr(params, batch_param, batch_value)
 
     sim_label = f'{params.in_amp}nA'
@@ -78,7 +78,7 @@ def run_sim(config_name, *batch_params):
     
     pop_labels_nums = {cell_type: params.num_cells for cell_type in cell_types}
 
-    for pop_label, pop_num in pop_labels_nums.items():
+    for pop_label, pop_num in list(pop_labels_nums.items()):
         netParams.popParams[f'{pop_label}_pop'] = {'cellType': 'IzhCell',
                                                    'numCells': pop_num}
 
@@ -235,7 +235,7 @@ def run_sim(config_name, *batch_params):
 
     ### Plot spike frequencies ###
     pop_msfs = {}
-    for pop_label, pop in pops.items():
+    for pop_label, pop in list(pops.items()):
 
         driven_rates, spont_rates = mh.get_firing_rates(times, spikes, pop, params.stim_dur, params.stim_delay, params.sim_dur)
 
