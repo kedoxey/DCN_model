@@ -163,7 +163,7 @@ def define_conns(num_cells, freqs, conn_params):
             try:
                 source_rand = random.sample(source_pool,int(num_source))
             except ValueError:
-                print(conn,target_id)
+                print((conn,target_id))
 
             conn_list.extend([[i,target_id] for i in source_rand])
 
@@ -225,7 +225,7 @@ def plot_firing_rates(driven_rates, spont_rates, pop, pop_label, sim_dir, sim_la
     axs.set_ylabel('Frequency (Hz)')
     axs.set_xlim([pop.cellGids[0]-2, pop.cellGids[-1]+2])
     axs.set_xticks(pop.cellGids)
-    axs.set_xticklabels(range(len(pop.cellGids)), rotation=90)
+    axs.set_xticklabels(list(range(len(pop.cellGids))), rotation=90)
     axs.set_xlabel('Cells (id)')
     axs.legend(loc='upper right')
     fig.tight_layout()
@@ -291,7 +291,7 @@ def plot_spike_times(num_cells, times, spikes, pops, stim_dur, stim_delay, sim_d
     fig2, axs2 = plt.subplots(1,1, figsize=(8,8))
 
     tot_cells = 0
-    for pop_label, pop in pops.items():
+    for pop_label, pop in list(pops.items()):
         # if 'vecstim' in pop_label:
         #     continue
         for gid in pop.cellGids:

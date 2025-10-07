@@ -5,7 +5,7 @@ import os
 import numpy as np
 import random
 import pandas as pd
-import model_helpers as mh
+from . import model_helpers as mh
 from numpy.random import default_rng
 
 seed = 74
@@ -85,7 +85,7 @@ cell_types = ['P', 'I2']  #['P', 'I2', 'W', 'AN']
 
 pop_labels_nums = {cell_type: n_cells for cell_type in cell_types}
 
-for pop_label, pop_num in pop_labels_nums.items():
+for pop_label, pop_num in list(pop_labels_nums.items()):
     netParams.popParams[f'{pop_label}_pop'] = {'cellType': 'IzhCell',
                                                 'numCells': pop_num}
 
@@ -137,7 +137,7 @@ conns_list = {'ANF_I2': [],
               'I2_P': []}
 
 
-for conn in conns_list.keys():
+for conn in list(conns_list.keys()):
 
     source = conn.split('_')[0]
     source_ids = cell_ids[source]
@@ -219,7 +219,7 @@ num_sims = 0
 
 for i_weight in i_weights:
 
-    if i_weight not in num_spikes.keys():
+    if i_weight not in list(num_spikes.keys()):
         num_spikes[i_weight] = {}
 
     for bf in bfs:
@@ -233,7 +233,7 @@ for i_weight in i_weights:
         
             anf_freqs = anf_freqs_orig[:]
 
-            if bf not in num_spikes[i_weight].keys():
+            if bf not in list(num_spikes[i_weight].keys()):
                 num_spikes[i_weight][bf] = {}
 
             lb = middle_i - 2
@@ -247,7 +247,7 @@ for i_weight in i_weights:
 
             for i, anf_freq in enumerate(anf_freqs):
                 
-                if i in inputs.keys():
+                if i in list(inputs.keys()):
                     anf_freqs[i] += inputs[i]
 
             print(anf_freqs)

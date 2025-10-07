@@ -12,4 +12,4 @@
 module load mamba/latest
 source activate python3_10
 
-python ~/DCN_model/cnmodel_pyramidal_response.py --hearing normal -i 1 -cf 22000 -f
+python ~/DCN_model/cnmodel_pyramidal_response.py --hearing normal --loss_limit 13000 -i 1 -cf 22000 -f

@@ -36,15 +36,15 @@ class CharacterizeNetwork(Protocol):
         # This creates a complete set of _virtual_ cells for each population. No
         # cells are instantiated at this point.
         self.sgc = populations.SGC(model="dummy", hearing=self.hearing, loss_limit=self.loss_limit)
-        self.dstellate = populations.DStellate()
+        self.dstellate = populations.DStellate(synapsetype='simple')
         # self.tstellate = populations.TStellate()
         if self.enable_ic:
             self.pyramidal = populations.Pyramidal(synapsetype='simple')
             self.tuberculoventral = populations.Tuberculoventral(synapsetype='simple')
             self.ic = populations.IC()
         else:
-            self.pyramidal = populations.Pyramidal()
-            self.tuberculoventral = populations.Tuberculoventral()
+            self.pyramidal = populations.Pyramidal(synapsetype='simple')
+            self.tuberculoventral = populations.Tuberculoventral(synapsetype='simple')
 
         pops = [
             self.sgc,
@@ -337,8 +337,8 @@ class CharacterizeNetwork(Protocol):
             # axs[i].plot(freqs_log, avg_rates, color='tab:blue')  #, 'o-')
             axs.plot(freqs, avg_rates, label=f'{level} dB')  #, color='tab:red')
 
-        xspan = len(freqs)//4
-        axs.set_xticks([freqs[i] for i in [0, xspan, xspan*2, xspan*3, xspan*4]])
+        # xspan = len(freqs)//4
+        # axs.set_xticks([freqs[i] for i in [0, xspan, xspan*2, xspan*3, xspan*4]])
         # axs.set_xticklabels([round(freqs[i]/1000) for i in [0,xspan, xspan*2, xspan*3, xspan*4]])
         axs.set_xlabel('Characteristic Frequency (kHz)')
         axs.set_ylabel('Firing Rate (Hz)')
@@ -372,15 +372,15 @@ def main():
     parallel = True
 
     # nreps = args.iterations
-    fmin = 4e3
-    fmax = 40e3
-    octavespacing = 1 / 200.0  # 16 -> 66, 32 -> 107, 64 -> 213, 200 -> 665
-    n_frequencies = int(np.log2(fmax / fmin) / octavespacing) + 1
+    cf_fmin = 12e3   # 12e3 for response map otherwise 4e3
+    cf_fmax = 40e3
+    cf_octavespacing = 1 / 16.0  # 16 -> 66, 32 -> 107, 64 -> 213, 200 -> 665
+    cf_n_frequencies = int(np.log2(cf_fmax / cf_fmin) / cf_octavespacing) + 1
     cf_fvals = (
         np.logspace(
-            np.log2(fmin / 1000.0),
-            np.log2(fmax / 1000.0),
-            num=n_frequencies,
+            np.log2(cf_fmin / 1000.0),
+            np.log2(cf_fmax / 1000.0),
+            num=cf_n_frequencies,
             endpoint=True,
             base=2,
         )
@@ -388,8 +388,8 @@ def main():
     )
     # cf_fvals = np.array([10e3])
 
-    n_levels = 6
-    levels = [60]  # [20, 40, 60, 80, 100]  # np.linspace(20, 100, n_levels)  # 20, 100, n_levels
+    n_levels = 11
+    levels = np.linspace(20, 100, n_levels)  # 20, 100, n_levels
 
     print(("Frequencies:", cf_fvals / 1000.0))
     print(("Levels:", levels))
@@ -402,22 +402,24 @@ def main():
     # force_run = False
     # cells_per_band = args.cells_per_band
     syntype = "multisite"
+    loss_method = 'm1'
+    loss_frac = 70
 
-    sim_flag = 'network_ds2v'
+    sim_flag = 'network_resp_map'
 
     cwd = os.getcwd() # os.path.dirname(__file__)
     cachepath = os.path.join('/scratch/kedoxey', "cache_network")
-    if 'loss' in args.hearing:
-        cachepath += f'_{args.loss_limit}loss-m3_60'
-        sim_flag += f'_{args.loss_limit}loss-m3_60'
     if args.enable_ic:
         cachepath += '_ic'
         sim_flag += '_ic'
+    if 'loss' in args.hearing:
+        cachepath += f'_{args.loss_limit}loss-{loss_method}_{loss_frac}'
+        sim_flag += f'_{args.loss_limit}loss-{loss_method}_{loss_frac}'
     print(cachepath)
     if not os.path.isdir(cachepath):
         os.mkdir(cachepath)
 
-    sim_dir = os.path.join(cwd, 'output', f'response_maps-{sim_flag}')
+    sim_dir = os.path.join('/scratch/kedoxey/dcnmodel_scratch', 'output', f'response_maps-{sim_flag}')
     if not os.path.exists(sim_dir):
         os.mkdir(sim_dir)
     fig_dir = os.path.join(sim_dir, f'{len(cf_fvals)}cfs_{len(levels)}dbs_{args.input_frequency}if_{args.cells_per_band}cpb_{args.iterations}nreps')
@@ -434,11 +436,25 @@ def main():
         "dur": 0.26,
         "pip": 0.1,
         "start": [0.1],
-        "baseline": [50, 100],
-        "response": [100, 200],
+        "baseline": [50, 150],
+        "response": [150, 250],
     }
 
-    input_fvals = [float(args.input_frequency)]
+    # input_fvals = [float(args.input_frequency)]
+    input_fmin = 4e3
+    input_fmax = 32e3
+    input_octavespacing = 1 / 8.0  # 8.0
+    input_n_frequencies = int(np.log2(input_fmax / input_fmin) / input_octavespacing) + 1
+    input_fvals = (
+        np.logspace(
+            np.log2(input_fmin / 1000.0),
+            np.log2(input_fmax / 1000.0),
+            num=input_n_frequencies,
+            endpoint=True,
+            base=2,
+        )
+        * 1000.0
+    )
     tasks = []
     for f in input_fvals:
         for db in levels:

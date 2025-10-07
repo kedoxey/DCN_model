@@ -13,4 +13,4 @@ module load mamba/latest
 source activate python3_10
 
 # python ~/DCN_model/cnmodel_network.py --hearing normal -c 1 -i 2 -if 22000 
-python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 2 -if 22000 -f -ic
+python ~/DCN_model/cnmodel_network.py --hearing normal --loss_limit 13000 -c 1 -i 2 -if 22000

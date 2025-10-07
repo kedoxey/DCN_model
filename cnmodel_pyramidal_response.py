@@ -14,10 +14,12 @@ from neuron import h
 import multiprocessing as mp
 import seaborn as sns
 import yaml
+import itertools
 
 
 class CNSoundStim(Protocol):
-    def __init__(self, seed, characteristic_frequency, temp=34.0, dt=0.025, hearing='normal', loss_limit=99e3, synapsetype="simple", enable_ic=False):
+    def __init__(self, seed, characteristic_frequency, temp=34.0, dt=0.025, hearing='normal', 
+                 loss_limit=99e3, synapsetype="simple", include_ic=False, pyr_erev=-62):
         Protocol.__init__(self)
 
         self.base_data = None
@@ -28,18 +30,25 @@ class CNSoundStim(Protocol):
 
         self.hearing = hearing  # normal or loss
         self.loss_limit = loss_limit
-        self.enable_ic = enable_ic
+        self.include_ic = include_ic
 
         # Seed now to ensure network generation is stable
         random_seed.set_seed(seed)
         # Create cell populations.
         # This creates a complete set of _virtual_ cells for each population. No
         # cells are instantiated at this point.
-        self.sgc = populations.SGC(model="dummy", hearing=self.hearing, loss_limit=self.loss_limit)
-        self.dstellate = populations.DStellate()
+        self.sgc = populations.SGC(model="dummy", hearing=self.hearing, loss_limit=self.loss_limit, synapsetype=synapsetype)
+        self.dstellate = populations.DStellate(synapsetype=synapsetype)
         # self.tstellate = populations.TStellate()
-        self.tuberculoventral = populations.Tuberculoventral()
-        self.pyramidal = populations.Pyramidal()
+        # if self.include_ic:
+        #     self.pyramidal = populations.Pyramidal(synapsetype='simple')
+        #     self.tuberculoventral = populations.Tuberculoventral(synapsetype='simple')
+        #     self.ic = populations.IC()
+        # else:
+        syn_opts = {'sgc': {'weight': 0.0327},                 # default = 0.000327
+                    'tuberculoventral': {'weight': 0.002705}}  # default = 0.002705
+        self.pyramidal = populations.Pyramidal(erev=pyr_erev, synapsetype=synapsetype, syn_opts=syn_opts)
+        self.tuberculoventral = populations.Tuberculoventral(synapsetype=synapsetype)
 
         pops = [
             self.sgc,
@@ -48,6 +57,8 @@ class CNSoundStim(Protocol):
             # self.tstellate,
             self.pyramidal
         ]
+        if self.include_ic:
+            pops.append(self.ic)
         self.populations = OrderedDict([(pop.type, pop) for pop in pops])
 
         # set synapse type to use in the sgc population - simple is fast, multisite is slower
@@ -60,9 +71,13 @@ class CNSoundStim(Protocol):
         self.sgc.connect(
             self.pyramidal, self.dstellate, self.tuberculoventral  # , self.tstellate
         )
-        self.dstellate.connect(self.pyramidal)
+        self.dstellate.connect(self.pyramidal, self.tuberculoventral)
         self.tuberculoventral.connect(self.pyramidal)  #, self.tstellate) 
         # self.tstellate.connect(self.pyramidal)
+
+        if self.include_ic:
+            self.pyramidal.connect(self.ic)
+            self.ic.connect(self.pyramidal, self.tuberculoventral)
 
         # Select cells to record from.
         # At this time, we actually instantiate the selected cells.
@@ -70,7 +85,7 @@ class CNSoundStim(Protocol):
         self.characteristic_frequency = characteristic_frequency
         cells_per_band = 1
         pyramidal_cell_ids = self.pyramidal.select(cells_per_band, cf=self.characteristic_frequency, create=True)
-
+        self.pyramidal_id = pyramidal_cell_ids[0]
         # Now create the supporting circuitry needed to drive the cells we selected.
         # At this time, cells are created in all populations and automatically
         # connected with synapses.
@@ -181,7 +196,7 @@ class CNSoundStim(Protocol):
         spont_time = 0
 
         pop_type = 'pyramidal'
-        cell_ind = self.pyramidal.real_cells()[0]
+        cell_ind = self.pyramidal_id
 
         for stim, iterations in list(results_od.values()):
             for vec in list(iterations.values()):
@@ -228,11 +243,11 @@ class CNSoundStim(Protocol):
         axs.set_xlabel('Frequency (kHz)')
         axs.set_ylabel('Sound Level (dBSPL)')
         # axs.set_xscale('log')
-        axs.set_xticks([freqs_log[i] for i in [0, 6, 12, 18, 24]])
-        axs.set_xticklabels([round(np.ceil(freqs[i]/1000)) for i in [0, 6, 12, 18, 24]])
+        axs.set_xticks([freqs_log[int(i)] for i in np.linspace(0,len(freqs)-1,5)])
+        axs.set_xticklabels([round(np.ceil(freqs[int(i)]/1000)) for i in np.linspace(0,len(freqs)-1,5)])
 
         title = 'Hearing Loss' if 'loss' in self.hearing else 'Normal Hearing'
-        if self.enable_ic:
+        if self.include_ic:
             title += ' with IC'
         axs.set_title(title)
 
@@ -241,7 +256,7 @@ class CNSoundStim(Protocol):
         filename = f'{len(freqs)}fs_{len(levels)}dbs_{self.characteristic_frequency}cf-response_map'
         if 'loss' in self.hearing:
             filename += '-loss'
-        if self.enable_ic:
+        if self.include_ic:
             filename += '-ic'
         fig.savefig(os.path.join(output_dir, f'{filename}.png'), dpi=300)
 
@@ -259,13 +274,8 @@ class CNSoundStim(Protocol):
                             'pyramidal': len(self.pyramidal.real_cells())}
         }
         # temp = 5
-        filename = os.path.join(output_dir, f'{len(freqs)}fs_{len(levels)}dbs_{self.characteristic_frequency}cf-metadata')
-        if 'loss' in self.hearing:
-            filename += '-loss'
-        if self.enable_ic:
-            filename += '-ic'
-        with open(os.path.join(output_dir, f'{filename}.yml'), 'w') as outfile:
-            yaml.dump(metadata, outfile,)
+
+        return metadata
 
 
     def get_response_rate(self, stim):
@@ -281,87 +291,7 @@ class CNSoundStim(Protocol):
         return response_rate
 
 
-def main():
-
-    parser = argparse.ArgumentParser(description='run network with single pyramidal cell for various sound levels and frequencies')
-    parser.add_argument('--hearing', type=str, choices=['normal', 'loss'], help='type of hearing')
-    parser.add_argument('--loss_limit', default=99e3, type=int, help='lower frequency limit for hearing loss')
-    parser.add_argument('-i', '--iterations', type=int, help='number of simulation iterations')
-    parser.add_argument('-cf', '--characteristic_frequency', type=int, help='characteristic frequency (Hz) of pyramidal cell')
-    parser.add_argument('-f', '--force_run', action='store_true', help='force run cell simulation')
-    parser.add_argument('-ic', '--include_ic', action='store_true', help='include inferior colliculus')
-    
-    args = parser.parse_args()
-
-    stims = []
-    parallel = True
-
-    fmin = 4e3
-    fmax = 32e3
-    octavespacing = 1 / 8.0  # 8.0
-    n_frequencies = int(np.log2(fmax / fmin) / octavespacing) + 1
-    fvals = (
-        np.logspace(
-            np.log2(fmin / 1000.0),
-            np.log2(fmax / 1000.0),
-            num=n_frequencies,
-            endpoint=True,
-            base=2,
-        )
-        * 1000.0
-    )
-
-    n_levels = 11
-    levels = np.linspace(20, 100, n_levels)  # 20, 100, n_levels
-
-    print(("Frequencies:", fvals / 1000.0))
-    print(("Levels:", levels))
-
-    seed = 34657845
-    temp = 34.0
-    dt = 0.025
-    # hearing = 'normal'
-    # enable_ic = False
-    # force_run = False
-    syntype = "multisite"
-
-    sim_flag = 'single_cell-longerstim'
-
-    cwd = os.getcwd() # os.path.dirname(__file__)
-    cachepath = os.path.join('/scratch/kedoxey', "cache")
-    if 'loss' in args.hearing:
-        cachepath += '_loss-m3_60'
-        sim_flag += '_loss-m3_60'
-    if args.include_ic:
-        cachepath += '_ic'
-        sim_flag += '_ic'
-    print(cachepath)
-    if not os.path.isdir(cachepath):
-        os.mkdir(cachepath)
-
-    fig_dir = os.path.join(cwd, 'output', f'response_maps-{sim_flag}')
-    if not os.path.exists(fig_dir):
-        os.mkdir(fig_dir)
-
-    prot = CNSoundStim(seed=seed, characteristic_frequency=args.characteristic_frequency, hearing=args.hearing, 
-                       loss_limit=args.loss_limit, synapsetype=syntype, enable_ic=args.include_ic)
-
-    if args.include_ic:
-        try:
-            filename = f'{len(fvals)}fs_{len(levels)}dbs-response_map'
-            if 'loss' in args.hearing:
-                filename += '-loss'
-            prot.base_data = pickle.load(open(os.path.join(fig_dir, f'DATA-{filename}.pkl'), 'rb'))
-        except FileNotFoundError:
-            print('Missing simulation data for network without IC')
-
-    stimpar = {
-        "dur": 0.26,
-        "pip": 0.1,
-        "start": [0.1],
-        "baseline": [50, 100],
-        "response": [100, 200],
-    }
+def run_simulation(prot, fvals, levels, args, parallel, seed, stimpar, syntype, cachepath, output_dir):
 
     tasks = []
     for f in fvals:
@@ -403,7 +333,160 @@ def main():
 
         results[(f, db, iteration)] = (stim, result)
 
-    prot.plot_results(args.iterations, results, baseline=stimpar['baseline'], response=stimpar['response'], output_dir=fig_dir)
+    metadata = prot.plot_results(args.iterations, results, baseline =stimpar['baseline'], response=stimpar['response'], output_dir=output_dir)
+    
+    return metadata
+
+
+def main():
+
+    parser = argparse.ArgumentParser(description='run network with single pyramidal cell for various sound levels and frequencies')
+    parser.add_argument('--hearing', type=str, choices=['normal', 'loss'], help='type of hearing')
+    parser.add_argument('--loss_limit', default=99e3, type=int, help='lower frequency limit for hearing loss')
+    parser.add_argument('-i', '--iterations', type=int, help='number of simulation iterations')
+    parser.add_argument('-cf', '--characteristic_frequency', type=int, help='characteristic frequency (Hz) of pyramidal cell')
+    parser.add_argument('-f', '--force_run', action='store_true', help='force run cell simulation')
+    parser.add_argument('-ic', '--include_ic', action='store_true', help='include inferior colliculus')
+    
+    args = parser.parse_args()
+
+    stims = []
+    parallel = True
+
+    fmin = 4e3
+    fmax = 32e3
+    octavespacing = 1 / 4.0  # 8.0 -> 25 frequencies, 4.0 -> 13
+    n_frequencies = int(np.log2(fmax / fmin) / octavespacing) + 1
+    fvals = (
+        np.logspace(
+            np.log2(fmin / 1000.0),
+            np.log2(fmax / 1000.0),
+            num=n_frequencies,
+            endpoint=True,
+            base=2,
+        )
+        * 1000.0
+    )
+
+    n_levels = 6
+    levels = np.linspace(20, 100, n_levels)  # 20, 100, n_levels
+
+    print(("Frequencies:", fvals / 1000.0))
+    print(("Levels:", levels))
+
+    seed = 34657845
+    temp = 34.0
+    dt = 0.025
+    # hearing = 'normal'
+    # include_ic = False
+    # force_run = False
+    syntype = "simple"
+
+    loss_method = 'm1'
+    loss_frac = 70
+
+    erev = -62  # -62 default
+
+    stimpar = {
+        "dur": 0.3,
+        "pip": 0.1,
+        "start": [0.125],       # equals response start in seconds
+        "baseline": [25, 125],  # baseline duration has to equal response duration
+        "response": [125, 225],
+        }
+
+    sim_flag = f'single_cell-{len(fvals)}fs_{n_levels}ls'
+
+    cwd = os.getcwd() # os.path.dirname(__file__)
+    cachepath = os.path.join('/scratch/kedoxey', "cache")
+    if 'loss' in args.hearing:
+        cachepath += f'_{args.loss_limit}loss-{loss_method}_{loss_frac}'
+        sim_flag += f'_{args.loss_limit}loss-{loss_method}_{loss_frac}'
+    if args.include_ic:
+        cachepath += '_ic'
+        sim_flag += '_ic'
+    print(cachepath)
+    if not os.path.isdir(cachepath):
+        os.mkdir(cachepath)
+
+    top_dir = os.path.join('/scratch/kedoxey/dcnmodel_scratch', 'output', f'response_maps-{sim_flag}')
+    if not os.path.exists(top_dir):
+        os.mkdir(top_dir)
+
+    # if args.include_ic:
+    #     try:
+    #         filename = f'{len(fvals)}fs_{len(levels)}dbs-response_map'
+    #         if 'loss' in args.hearing:
+    #             filename += '-loss'
+    #         prot.base_data = pickle.load(open(os.path.join(fig_dir, f'DATA-{filename}.pkl'), 'rb'))
+    #     except FileNotFoundError:
+    #         print('Missing simulation data for network without IC')
+
+    batch_weights = True
+
+    if batch_weights is True:
+
+        sgc_weights = [0.000327, 0.003, 0.03, 0.3]
+        tv_weights = [0.002705]  # , 0.02, 0.2]
+        
+        weight_combos = list(itertools.product(*[sgc_weights, tv_weights]))
+
+        # syn_opts = []
+        for weight_combo in weight_combos:
+
+            sgc_weight = weight_combo[0]
+            tv_weight = weight_combo[1]
+
+            sim_dir = os.path.join(top_dir, f'SPx{sgc_weight}_VPx{tv_weight}')
+            if not os.path.exists(sim_dir):
+                os.mkdir(sim_dir)
+
+            syn_opt = {'sgc': {'weight': sgc_weight},
+                       'tuberculoventral': {'weight': tv_weight}}
+            
+            prot = CNSoundStim(seed=seed, characteristic_frequency=args.characteristic_frequency, hearing=args.hearing, 
+                       loss_limit=args.loss_limit, synapsetype=syntype, include_ic=args.include_ic, pyr_erev=erev)
+            
+            metadata = run_simulation(prot, fvals, levels, args, parallel, seed, stimpar, syntype, cachepath, sim_dir)
+            # syn_opts.append(syn_opt)
+
+            metadata['stimpar'] = stimpar
+            metadata['erev'] = erev
+            metadata['inputs'] = {'n_freqs': len(fvals),
+                                'n_levels': n_levels}
+            metadata['hearing'] = {'type': args.hearing,
+                                'loss_limit': args.loss_limit}
+            metadata['cf'] = args.characteristic_frequency
+
+            filename = os.path.join(sim_dir, f'{len(fvals)}fs_{len(levels)}dbs_{args.characteristic_frequency}cf-metadata')
+            if 'loss' in args.hearing:
+                filename += '-loss'
+            if args.include_ic:
+                filename += '-ic'
+
+            with open(os.path.join(sim_dir, f'{filename}.yml'), 'w') as outfile:
+                yaml.dump(metadata, outfile,)
+    else:
+
+        metadata = run_simulation(prot, fvals, levels, args, parallel, seed, stimpar, syntype, cachepath, top_dir)
+
+        metadata['stimpar'] = stimpar
+        metadata['erev'] = erev
+        metadata['inputs'] = {'n_freqs': len(fvals),
+                            'n_levels': n_levels}
+        metadata['hearing'] = {'type': args.hearing,
+                            'loss_limit': args.loss_limit}
+        metadata['cf'] = args.characteristic_frequency
+
+        filename = os.path.join(top_dir, f'{len(fvals)}fs_{len(levels)}dbs_{args.characteristic_frequency}cf-metadata')
+        if 'loss' in args.hearing:
+            filename += '-loss'
+        if args.include_ic:
+            filename += '-ic'
+
+        with open(os.path.join(top_dir, f'{filename}.yml'), 'w') as outfile:
+            yaml.dump(metadata, outfile,)
+
 
 
 if __name__ == '__main__':

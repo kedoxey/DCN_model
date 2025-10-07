@@ -1,4 +1,4 @@
-import simulate_network
+from . import simulate_network
 import numpy as np
 from sklearn.model_selection import ParameterGrid
 
