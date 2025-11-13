@@ -5,6 +5,7 @@ from collections import OrderedDict
 import os, sys, time
 import pickle
 import random
+import time
 import argparse
 import pandas as pd
 import numpy as np
@@ -16,10 +17,11 @@ import seaborn as sns
 import yaml
 import itertools
 
+start_t = time.time()
 
 class CNSoundStim(Protocol):
     def __init__(self, seed, characteristic_frequency, temp=34.0, dt=0.025, hearing='normal', 
-                 loss_limit=99e3, synapsetype="simple", include_ic=False, pyr_erev=-62):
+                 loss_limit=99e3, synapsetype="simple", syn_opts=None, include_ic=False, pyr_erev=-62):
         Protocol.__init__(self)
 
         self.base_data = None
@@ -27,7 +29,7 @@ class CNSoundStim(Protocol):
         self.seed = seed
         self.temp = temp
         self.dt = dt
-
+        self.syn_opts = syn_opts
         self.hearing = hearing  # normal or loss
         self.loss_limit = loss_limit
         self.include_ic = include_ic
@@ -45,8 +47,9 @@ class CNSoundStim(Protocol):
         #     self.tuberculoventral = populations.Tuberculoventral(synapsetype='simple')
         #     self.ic = populations.IC()
         # else:
-        syn_opts = {'sgc': {'weight': 0.0327},                 # default = 0.000327
-                    'tuberculoventral': {'weight': 0.002705}}  # default = 0.002705
+
+        # syn_opts = {'sgc': {'weight': 0.0327},                 # default = 0.000327
+        #             'tuberculoventral': {'weight': 0.002705}}  # default = 0.002705
         self.pyramidal = populations.Pyramidal(erev=pyr_erev, synapsetype=synapsetype, syn_opts=syn_opts)
         self.tuberculoventral = populations.Tuberculoventral(synapsetype=synapsetype)
 
@@ -317,9 +320,10 @@ def run_simulation(prot, fvals, levels, args, parallel, seed, stimpar, syntype, 
         )
 
         cachefile = os.path.join(cachepath, f'seed={seed}_f0={f}_dbspl={db}_cf={args.characteristic_frequency}_syntype={syntype}_iter={iteration}')
-        
+    
         if (not os.path.isfile(cachefile)) or args.force_run:
             print(f'running - f = {f}, dbspl = {db}')
+            print(cachefile)
             # result = prot.run(f, db, iteration, seed=i)  # parallelize
             result = mp.Manager().dict()
             p1 = mp.Process(target=prot.run, args=(stim, i, result))
@@ -355,7 +359,7 @@ def main():
 
     fmin = 4e3
     fmax = 32e3
-    octavespacing = 1 / 4.0  # 8.0 -> 25 frequencies, 4.0 -> 13
+    octavespacing = 1 / 4.0  # 2 -> 7, 4 -> 13, 8 -> 25, 16 -> 66, 32 -> , 64 -> 262
     n_frequencies = int(np.log2(fmax / fmin) / octavespacing) + 1
     fvals = (
         np.logspace(
@@ -368,7 +372,7 @@ def main():
         * 1000.0
     )
 
-    n_levels = 6
+    n_levels = 8   # 11
     levels = np.linspace(20, 100, n_levels)  # 20, 100, n_levels
 
     print(("Frequencies:", fvals / 1000.0))
@@ -380,12 +384,12 @@ def main():
     # hearing = 'normal'
     # include_ic = False
     # force_run = False
-    syntype = "simple"
+    syntype = "simple"  # simple or multisite
 
     loss_method = 'm1'
     loss_frac = 70
 
-    erev = -62  # -62 default
+    erev = -60  # -62 default
 
     stimpar = {
         "dur": 0.3,
@@ -395,7 +399,7 @@ def main():
         "response": [125, 225],
         }
 
-    sim_flag = f'single_cell-{len(fvals)}fs_{n_levels}ls'
+    sim_flag = f'single_cell-{syntype}_syns-{len(fvals)}fs_{n_levels}ls'
 
     cwd = os.getcwd() # os.path.dirname(__file__)
     cachepath = os.path.join('/scratch/kedoxey', "cache")
@@ -409,7 +413,7 @@ def main():
     if not os.path.isdir(cachepath):
         os.mkdir(cachepath)
 
-    top_dir = os.path.join('/scratch/kedoxey/dcnmodel_scratch', 'output', f'response_maps-{sim_flag}')
+    top_dir = os.path.join(cwd, 'output', f'response_maps-{sim_flag}')
     if not os.path.exists(top_dir):
         os.mkdir(top_dir)
 
@@ -426,11 +430,14 @@ def main():
 
     if batch_weights is True:
 
-        sgc_weights = [0.000327, 0.003, 0.03, 0.3]
-        tv_weights = [0.002705]  # , 0.02, 0.2]
+        print('Running batch simulations')
+
+        sgc_weights = [0.000327, 0.003, 0.03]  # 0.000327
+        tv_weights = [0.002705, 0.02, 0.2]  # 0.002705 
         
         weight_combos = list(itertools.product(*[sgc_weights, tv_weights]))
 
+        cachepath_og = cachepath
         # syn_opts = []
         for weight_combo in weight_combos:
 
@@ -441,11 +448,17 @@ def main():
             if not os.path.exists(sim_dir):
                 os.mkdir(sim_dir)
 
-            syn_opt = {'sgc': {'weight': sgc_weight},
-                       'tuberculoventral': {'weight': tv_weight}}
+            cachepath += f'SPx{sgc_weight}_VPx{tv_weight}'
+            if not os.path.isdir(cachepath):
+                os.mkdir(cachepath)
+
+            syn_opts = {'sgc': {'weight': sgc_weight},
+                        'tuberculoventral': {'weight': tv_weight}}
             
             prot = CNSoundStim(seed=seed, characteristic_frequency=args.characteristic_frequency, hearing=args.hearing, 
-                       loss_limit=args.loss_limit, synapsetype=syntype, include_ic=args.include_ic, pyr_erev=erev)
+                       loss_limit=args.loss_limit, synapsetype=syntype, syn_opts=syn_opts, include_ic=args.include_ic, pyr_erev=erev)
+
+            print(f'Synaptic weights: SGC->P x {sgc_weight}, V->P x {tv_weight}')
             
             metadata = run_simulation(prot, fvals, levels, args, parallel, seed, stimpar, syntype, cachepath, sim_dir)
             # syn_opts.append(syn_opt)
@@ -464,9 +477,21 @@ def main():
             if args.include_ic:
                 filename += '-ic'
 
+            end_t = time.time()
+            elapsed_t = end_t-start_t
+            hours, remainder = divmod(elapsed_t,3600)
+            minutes, seconds = divmod(remainder,60)
+            metadata['runtime'] = f'{int(hours)}:{int(minutes)}:{int(seconds)}'
+
             with open(os.path.join(sim_dir, f'{filename}.yml'), 'w') as outfile:
                 yaml.dump(metadata, outfile,)
+
+            cachepath = cachepath_og
     else:
+
+        prot = CNSoundStim(seed=seed, characteristic_frequency=args.characteristic_frequency, hearing=args.hearing, 
+                           loss_limit=args.loss_limit, synapsetype=syntype, include_ic=args.include_ic, pyr_erev=erev)
+
 
         metadata = run_simulation(prot, fvals, levels, args, parallel, seed, stimpar, syntype, cachepath, top_dir)
 
@@ -475,7 +500,7 @@ def main():
         metadata['inputs'] = {'n_freqs': len(fvals),
                             'n_levels': n_levels}
         metadata['hearing'] = {'type': args.hearing,
-                            'loss_limit': args.loss_limit}
+                               'loss_limit': args.loss_limit}
         metadata['cf'] = args.characteristic_frequency
 
         filename = os.path.join(top_dir, f'{len(fvals)}fs_{len(levels)}dbs_{args.characteristic_frequency}cf-metadata')
@@ -483,6 +508,12 @@ def main():
             filename += '-loss'
         if args.include_ic:
             filename += '-ic'
+
+        end_t = time.time()
+        elapsed_t = end_t-start_t
+        hours, remainder = divmod(elapsed_t,3600)
+        minutes, seconds = divmod(remainder,60)
+        metadata['runtime'] = f'{int(hours)}:{int(minutes)}:{int(seconds)}'
 
         with open(os.path.join(top_dir, f'{filename}.yml'), 'w') as outfile:
             yaml.dump(metadata, outfile,)

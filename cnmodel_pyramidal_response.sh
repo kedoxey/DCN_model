@@ -3,7 +3,7 @@
 #SBATCH -c 32
 #SBATCH --mem=128G
 #SBATCH -t 1-00:00:00
-#SBATCH -p general
+#SBATCH -p public
 #SBATCH -q public
 #SBATCH -e slurm.%j.err
 #SBATCH --mail-type=ALL
