@@ -469,10 +469,13 @@ def main():
     cohc = args.cohc
     cihc = args.cihc
 
-    resp_type = 'IV'
+    resp_type = 'III'
 
-    sgc_weight = 0.00038  # type III - 0.00044, type IV - 0.00038, default - 0.000327
-    tv_weight = 0.0039    # type III - 0.0006, type IV - 0.0039, default - 0.0027
+    hf = 3
+
+    sgc_weight = np.round(0.00044*hf, 7)  # type III - 0.00044, type IV - 0.00038, default - 0.000327
+    tv_weight = np.round(0.0006/hf, 7)    # type III - 0.0006, type IV - 0.0039, default - 0.0027
+    ds_weight = np.round(0.002228/hf, 7)
 
     sim_flag = f'{input_type}-network-{resp_type}'
     if args.cohcs or args.cihcs:
@@ -488,11 +491,12 @@ def main():
     cwd = os.getcwd() # os.path.dirname(__file__)
     cachepath = os.path.join('/scratch/kedoxey', "cache_network")
     if args.enable_ic:
-        cachepath += '_ic'
         sim_flag += '_ic'
     if 'loss' in args.hearing:
-        cachepath += f'_{args.loss_limit}loss-{loss_method}'
         sim_flag += f'_{args.loss_limit}loss-{loss_method}'
+
+    cachepath += sim_flag
+
     print(cachepath)
     if not os.path.isdir(cachepath):
         os.mkdir(cachepath)
@@ -504,17 +508,23 @@ def main():
     fig_dir = os.path.join(sim_dir, f'{len(cf_fvals)}cfs_{len(levels)}dbs_{levels[0]}dB_{args.input_frequency}if_{args.cells_per_band}cpb_{args.iterations}nreps')
     if not os.path.exists(fig_dir):
         os.mkdir(fig_dir)
+    
+    sub_fig_dir = os.path.join(fig_dir, f'SPx{sgc_weight}_VPx{tv_weight}_DPx{ds_weight}')
+    if not os.path.exists(sub_fig_dir):
+        os.mkdir(sub_fig_dir)
 
     syn_opts = {'sgc': {'weight': sgc_weight},
-                'tuberculoventral': {'weight': tv_weight}}
+                'tuberculoventral': {'weight': tv_weight},
+                'dstellate': {'weight': ds_weight}}
 
-    batch_hair_cells = True if args.cohcs or args.cihc else False
+    batch_hair_cells = True if args.cohcs or args.cihcs else False
 
     if batch_hair_cells:
 
         if args.cohcs and args.cihcs:
             cohcs = np.round(np.arange(0.2,1.1,0.2), 1)
-            cihcs = np.round(np.arange(0.2,1.1,0.2), 1)
+            # cihcs = np.round(np.arange(0.2,1.1,0.2), 1)
+            cihcs = np.round(np.arange(0.01,0.2,0.04), 2)
         elif args.cohcs:
             cohcs = np.round(np.arange(0,1.1,0.2), 1)
             cihcs = [1.0 for _ in cohcs]
@@ -597,9 +607,9 @@ def main():
     else:
 
         prot = CharacterizeNetwork(seed=seed, frequencies=cf_fvals, cells_per_band=args.cells_per_band, 
-                                hearing=args.hearing, loss_limit=args.loss_limit, 
-                                synapsetype=syntype, enable_ic=args.enable_ic,
-                                cohc=cohc, cihc=cihc, syn_opts=syn_opts)
+                                   hearing=args.hearing, loss_limit=args.loss_limit, 
+                                   synapsetype=syntype, enable_ic=args.enable_ic,
+                                   cohc=cohc, cihc=cihc, syn_opts=syn_opts)
         pickle.dump(prot.pyramidal_ids_per_band, open(os.path.join(fig_dir, 'pyramidal_ids_per_band.pkl'), 'wb'))
 
         stimpar = {
@@ -649,10 +659,10 @@ def main():
             
             results[(f, db, iteration)] = (stim, result)
 
-        pickle.dump(results, open(os.path.join(fig_dir, 'results_df.pkl'), 'wb'))
+        pickle.dump(results, open(os.path.join(sub_fig_dir, 'results_df.pkl'), 'wb'))
 
         avg_msfs, metadata = prot.save_stimulus_firing_rates(results, response=stimpar['response'], output_dir=fig_dir)
-        prot.plot_stimulus_firing_rates(avg_msfs, cf_fvals, fig_dir)
+        prot.plot_stimulus_firing_rates(avg_msfs, cf_fvals, sub_fig_dir)
         # prot.plot_results(nreps, results, baseline=stimpar['baseline'], response=stimpar['response'], output_dir=fig_dir)
 
     metadata['stimpar'] = stimpar
@@ -672,12 +682,12 @@ def main():
     if args.enable_ic:
         metadata['populations']['ic'] = len(self.ic.real_cells())
     # temp = 5
-    filename = os.path.join(fig_dir, f'metadata')
+    filename = os.path.join(sub_fig_dir, f'metadata')
     if 'loss' in args.hearing:
         filename += '-loss'
     if args.enable_ic:
         filename += '-ic'
-    with open(os.path.join(fig_dir, f'{filename}.yml'), 'w') as outfile:
+    with open(os.path.join(sub_fig_dir, f'{filename}.yml'), 'w') as outfile:
         yaml.dump(metadata, outfile,)
 
 if __name__ == '__main__':
