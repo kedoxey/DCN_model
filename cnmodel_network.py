@@ -46,7 +46,7 @@ class CharacterizeNetwork(Protocol):
         #     self.tuberculoventral = populations.Tuberculoventral(synapsetype='simple')
         #     self.ic = populations.IC()
         # else:
-        self.pyramidal = populations.Pyramidal(synapsetype='simple', syn_opts=syn_opts)
+        self.pyramidal = populations.Pyramidal(synapsetype='simple', hearing=self.hearing, loss_limit=self.loss_limit, syn_opts=syn_opts)
         self.tuberculoventral = populations.Tuberculoventral(synapsetype='simple')
 
         pops = [
@@ -391,6 +391,9 @@ def main():
     parser.add_argument('--cihcs', action='store_true', help='run batch iterations of level of inner hair cell impairment')
     parser.add_argument('--cohc', type=float, default=1.0, help='level of impairment of outer hair cells in cochlea model [0, 1]')
     parser.add_argument('--cihc', type=float, default=1.0, help='level of impairment of inner hair cells in cochlea model [0, 1]')
+    parser.add_argument('--hf', type=float, default=1.0, help='homeostasis factor')
+    parser.add_argument('--hp_loss', action='store_true', help='add homeostatic plasticiting to hearing loss range')
+    parser.add_argument('--hf_loss', type=float, default=1.0, help='homeostasis factor for hearing loss range')
     
     args = parser.parse_args()
 
@@ -464,6 +467,8 @@ def main():
     # cells_per_band = args.cells_per_band
     syntype = "simple"
     loss_method = 'hc'
+    if args.hp_loss:
+        loss_method += '_hf'
     loss_frac = 70
 
     cohc = args.cohc
@@ -471,11 +476,28 @@ def main():
 
     resp_type = 'III'
 
-    hf = 3
+    hf = args.hf
 
     sgc_weight = np.round(0.00044*hf, 7)  # type III - 0.00044, type IV - 0.00038, default - 0.000327
     tv_weight = np.round(0.0006/hf, 7)    # type III - 0.0006, type IV - 0.0039, default - 0.0027
     ds_weight = np.round(0.002228/hf, 7)
+
+    syn_opts = {'sgc': {'weight': sgc_weight},
+                'tuberculoventral': {'weight': tv_weight},
+                'dstellate': {'weight': ds_weight}}
+
+    if args.hp_loss:
+        syn_opts['hf_loss'] = {'sgc': args.hf_loss, 
+                               'tuberculoventral': 1/args.hf_loss,
+                               'dstellate': 1/args.hf_loss}
+
+    stimpar = {
+            "dur": 0.26,
+            "pip": 0.1,
+            "start": [0.15],
+            "baseline": [50, 150],
+            "response": [150, 250],
+        }
 
     sim_flag = f'{input_type}-network-{resp_type}'
     if args.cohcs or args.cihcs:
@@ -488,13 +510,13 @@ def main():
         sim_flag += f'-ohc_{cohc}-ihc_{cihc}'
     # sim_flag += f'-SPx{sgc_weight}_VPx{tv_weight}'
 
-    cwd = os.getcwd() # os.path.dirname(__file__)
-    cachepath = os.path.join('/scratch/kedoxey', "cache_network")
     if args.enable_ic:
         sim_flag += '_ic'
     if 'loss' in args.hearing:
-        sim_flag += f'_{args.loss_limit}loss-{loss_method}'
+        sim_flag += f'-{args.loss_limit}loss-{loss_method}'
 
+    cwd = os.getcwd() # os.path.dirname(__file__)
+    cachepath = os.path.join('/scratch/kedoxey', "cache_network")
     cachepath += sim_flag
 
     print(cachepath)
@@ -510,12 +532,10 @@ def main():
         os.mkdir(fig_dir)
     
     sub_fig_dir = os.path.join(fig_dir, f'SPx{sgc_weight}_VPx{tv_weight}_DPx{ds_weight}')
+    if args.hp_loss:
+        sub_fig_dir += f'-HFx{args.hf_loss}'
     if not os.path.exists(sub_fig_dir):
         os.mkdir(sub_fig_dir)
-
-    syn_opts = {'sgc': {'weight': sgc_weight},
-                'tuberculoventral': {'weight': tv_weight},
-                'dstellate': {'weight': ds_weight}}
 
     batch_hair_cells = True if args.cohcs or args.cihcs else False
 
@@ -547,14 +567,6 @@ def main():
                                     synapsetype=syntype, enable_ic=args.enable_ic,
                                     cohc=cohc, cihc=cihc, syn_opts=syn_opts)
             pickle.dump(prot.pyramidal_ids_per_band, open(os.path.join(hc_dir, 'pyramidal_ids_per_band.pkl'), 'wb'))
-
-            stimpar = {
-                "dur": 0.26,
-                "pip": 0.1,
-                "start": [0.15],
-                "baseline": [50, 150],
-                "response": [150, 250],
-            }
 
             tasks = []
             for f in input_fvals:
@@ -610,15 +622,7 @@ def main():
                                    hearing=args.hearing, loss_limit=args.loss_limit, 
                                    synapsetype=syntype, enable_ic=args.enable_ic,
                                    cohc=cohc, cihc=cihc, syn_opts=syn_opts)
-        pickle.dump(prot.pyramidal_ids_per_band, open(os.path.join(fig_dir, 'pyramidal_ids_per_band.pkl'), 'wb'))
-
-        stimpar = {
-            "dur": 0.26,
-            "pip": 0.1,
-            "start": [0.1],
-            "baseline": [50, 150],
-            "response": [150, 250],
-        }
+        pickle.dump(prot.pyramidal_ids_per_band, open(os.path.join(sub_fig_dir, 'pyramidal_ids_per_band.pkl'), 'wb'))
 
         tasks = []
         for f in input_fvals:
@@ -661,7 +665,7 @@ def main():
 
         pickle.dump(results, open(os.path.join(sub_fig_dir, 'results_df.pkl'), 'wb'))
 
-        avg_msfs, metadata = prot.save_stimulus_firing_rates(results, response=stimpar['response'], output_dir=fig_dir)
+        avg_msfs, metadata = prot.save_stimulus_firing_rates(results, response=stimpar['response'], output_dir=sub_fig_dir)
         prot.plot_stimulus_firing_rates(avg_msfs, cf_fvals, sub_fig_dir)
         # prot.plot_results(nreps, results, baseline=stimpar['baseline'], response=stimpar['response'], output_dir=fig_dir)
 

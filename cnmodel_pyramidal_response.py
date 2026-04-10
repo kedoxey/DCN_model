@@ -526,7 +526,7 @@ def main():
 
         print('Running batch simulations')
 
-        homeostasis_factors = [1, 2, 3]  # [0.3, 0.2, 0.1, 1, 1.5, 2, 2.5, 3]
+        homeostasis_factors = [0.3, 0.2, 0.1, 1.5, 2.5]  # [0.3, 0.2, 0.1, 1, 1.5, 2, 2.5, 3]
 
         sgc_weight = 0.00038
         tv_weight = 0.0039
