@@ -488,7 +488,7 @@ def main():
         "response": [125, 225],
         }
 
-    resp_type = 'IV'
+    resp_type = 'III'
 
     if args.response_map:
         sim_flag = f'{input_type}-{args.characteristic_frequency // 1000}kHZ_single_cell-{syntype}_syns-{len(fvals)}fs_{n_levels}ls-{args.iterations}nreps'
@@ -526,10 +526,10 @@ def main():
 
         print('Running batch simulations')
 
-        homeostasis_factors = [0.3, 0.2, 0.1, 1.5, 2.5]  # [0.3, 0.2, 0.1, 1, 1.5, 2, 2.5, 3]
+        homeostasis_factors = [1.01, 1.05, 1.1, 1.2, 1.3, 1.4]  # [0.3, 0.2, 0.1, 1, 1.5, 2, 2.5, 3]
 
-        sgc_weight = 0.00038
-        tv_weight = 0.0039
+        sgc_weight = 0.00044
+        tv_weight = 0.0006
         ds_weight = 0.002228
 
         weight_combos = [(np.round(sgc_weight*hf,7), np.round(tv_weight/hf,7), np.round(ds_weight/hf,7)) for hf in homeostasis_factors]

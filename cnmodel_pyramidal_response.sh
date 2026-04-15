@@ -15,19 +15,19 @@ source activate python3_10
 # python ~/DCN_model/cnmodel_pyramidal_response.py --hearing normal -i 5 -cf 22000 -f
 # python ~/DCN_model/cnmodel_pyramidal_response.py --hearing normal -i 10 -cf 22000 -if 22000 -idb 90 -f
 
-python ~/DCN_model/cnmodel_pyramidal_response.py --hearing normal -i 10 -cf 22000 -if 16000 -rl
-python ~/DCN_model/cnmodel_pyramidal_response.py --hearing normal -i 10 -cf 22000 -if 22000 -rl
-python ~/DCN_model/cnmodel_pyramidal_response.py --hearing normal -i 10 -cf 22000 -if 28000 -rl
+# python ~/DCN_model/cnmodel_pyramidal_response.py --hearing normal -i 10 -cf 22000 -if 16000 -rl
+python ~/DCN_model/cnmodel_pyramidal_response.py --hearing normal -i 10 -cf 22000 -if 22000 -rl -f
+# python ~/DCN_model/cnmodel_pyramidal_response.py --hearing normal -i 10 -cf 22000 -if 28000 -rl
 
 # python ~/DCN_model/cnmodel_pyramidal_response.py --hearing loss --loss_limit 13000 -i 10 -cf 22000 -if 16000 -rl --cohc 0.5 --cihc 1.0 -f
 # python ~/DCN_model/cnmodel_pyramidal_response.py --hearing loss --loss_limit 13000 -i 10 -cf 22000 -if 16000 -rl --cohc 1.0 --cihc 0.5 -f
 # python ~/DCN_model/cnmodel_pyramidal_response.py --hearing loss --loss_limit 13000 -i 10 -cf 22000 -if 16000 -rl --cohc 0.25 --cihc 0.25 -f
 
-# python ~/DCN_model/cnmodel_pyramidal_response.py --hearing loss --loss_limit 13000 -i 10 -cf 22000 -if 22000 -rl --cohc 0.5 --cihc 1.0 -f
-# python ~/DCN_model/cnmodel_pyramidal_response.py --hearing loss --loss_limit 13000 -i 10 -cf 22000 -if 22000 -rl --cohc 1.0 --cihc 0.5 -f
+python ~/DCN_model/cnmodel_pyramidal_response.py --hearing loss --loss_limit 13000 -i 10 -cf 22000 -if 22000 -rl --cohc 0.5 --cihc 1.0 -f
+python ~/DCN_model/cnmodel_pyramidal_response.py --hearing loss --loss_limit 13000 -i 10 -cf 22000 -if 22000 -rl --cohc 1.0 --cihc 0.5 -f
 
-# python ~/DCN_model/cnmodel_pyramidal_response.py --hearing loss --loss_limit 13000 -i 10 -cf 22000 -if 22000 -rl --cohc 0.25 --cihc 1.0 -f
-# python ~/DCN_model/cnmodel_pyramidal_response.py --hearing loss --loss_limit 13000 -i 10 -cf 22000 -if 22000 -rl --cohc 1.0 --cihc 0.25 -f
+python ~/DCN_model/cnmodel_pyramidal_response.py --hearing loss --loss_limit 13000 -i 10 -cf 22000 -if 22000 -rl --cohc 0.25 --cihc 1.0 -f
+python ~/DCN_model/cnmodel_pyramidal_response.py --hearing loss --loss_limit 13000 -i 10 -cf 22000 -if 22000 -rl --cohc 1.0 --cihc 0.25 -f
 
 # python ~/DCN_model/cnmodel_pyramidal_response.py --hearing loss --loss_limit 13000 -i 10 -cf 22000 -if 22000 -rl --cohc 0.25 --cihc 0.25 -f
 

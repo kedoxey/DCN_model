@@ -22,25 +22,30 @@ source activate python3_10
 # python ~/DCN_model/cnmodel_network.py --hearing normal -c 1 -i 10 -if 22000 -f --hf 2.5
 # python ~/DCN_model/cnmodel_network.py --hearing normal -c 1 -i 10 -if 22000 -f --hf 3
 
-python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --hp_loss --hf_loss 1.1
-python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --hp_loss --hf_loss 1.2
-python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --hp_loss --hf_loss 1.3
-python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --hp_loss --hf_loss 1.4
-python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --hp_loss --hf_loss 1.5
+python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --hp_loss --hf_loss 1
+python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --hp_loss --hf_loss 2
+python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --hp_loss --hf_loss 3
+python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --hp_loss --hf_loss 4
+python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --hp_loss --hf_loss 5
+# python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --hp_loss --hf_loss 1.01
+# python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --hp_loss --hf_loss 2
+# python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --hp_loss --hf_loss 1.0001
+# python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --hp_loss --hf_loss 1.4
+# python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --hp_loss --hf_loss 1.5
 
-python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --cohc 0.25 --cihc 1.0 --hp_loss --hf_loss 1.0
-python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --cohc 0.25 --cihc 1.0 --hp_loss --hf_loss 1.1
-python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --cohc 0.25 --cihc 1.0 --hp_loss --hf_loss 1.2
-python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --cohc 0.25 --cihc 1.0 --hp_loss --hf_loss 1.3
-python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --cohc 0.25 --cihc 1.0 --hp_loss --hf_loss 1.4
-python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --cohc 0.25 --cihc 1.0 --hp_loss --hf_loss 1.5
+# python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --cohc 0.25 --cihc 1.0 --hp_loss --hf_loss 1.0
+# python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --cohc 0.25 --cihc 1.0 --hp_loss --hf_loss 1.01
+# python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --cohc 0.25 --cihc 1.0 --hp_loss --hf_loss 2
+# python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --cohc 0.25 --cihc 1.0 --hp_loss --hf_loss 1.3
+# python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --cohc 0.25 --cihc 1.0 --hp_loss --hf_loss 1.4
+# python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --cohc 0.25 --cihc 1.0 --hp_loss --hf_loss 1.5
 
-python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --cohc 1.0 --cihc 0.25 --hp_loss --hf_loss 1.0
-python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --cohc 1.0 --cihc 0.25 --hp_loss --hf_loss 1.1
-python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --cohc 1.0 --cihc 0.25 --hp_loss --hf_loss 1.2
-python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --cohc 1.0 --cihc 0.25 --hp_loss --hf_loss 1.3
-python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --cohc 1.0 --cihc 0.25 --hp_loss --hf_loss 1.4
-python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --cohc 1.0 --cihc 0.25 --hp_loss --hf_loss 1.5
+# python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --cohc 1.0 --cihc 0.25 --hp_loss --hf_loss 1.0
+# python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --cohc 1.0 --cihc 0.25 --hp_loss --hf_loss 1.01
+# python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --cohc 1.0 --cihc 0.25 --hp_loss --hf_loss 2
+# python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --cohc 1.0 --cihc 0.25 --hp_loss --hf_loss 1.3
+# python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --cohc 1.0 --cihc 0.25 --hp_loss --hf_loss 1.4
+# python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 10 -if 22000 -f --cohc 1.0 --cihc 0.25 --hp_loss --hf_loss 1.5
 
 
 # python ~/DCN_model/cnmodel_network.py --hearing loss --loss_limit 13000 -c 1 -i 1 -if 22000 -f --cohcs

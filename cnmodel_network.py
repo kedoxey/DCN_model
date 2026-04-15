@@ -468,7 +468,7 @@ def main():
     syntype = "simple"
     loss_method = 'hc'
     if args.hp_loss:
-        loss_method += '_hf'
+        loss_method += '_hf3'
     loss_frac = 70
 
     cohc = args.cohc
@@ -487,9 +487,9 @@ def main():
                 'dstellate': {'weight': ds_weight}}
 
     if args.hp_loss:
-        syn_opts['hf_loss'] = {'sgc': args.hf_loss, 
-                               'tuberculoventral': 1/args.hf_loss,
-                               'dstellate': 1/args.hf_loss}
+        syn_opts['hf_loss'] = {'sgc': args.hf_loss*0.00001, 
+                               'tuberculoventral': -args.hf_loss*0.00001,
+                               'dstellate': -args.hf_loss*0.00001}
 
     stimpar = {
             "dur": 0.26,
