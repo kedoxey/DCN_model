@@ -51,7 +51,7 @@ class CNSoundStim(Protocol):
 
         # syn_opts = {'sgc': {'weight': 0.0327},                 # default = 0.000327
         #             'tuberculoventral': {'weight': 0.002705}}  # default = 0.002705
-        self.pyramidal = populations.Pyramidal(erev=pyr_erev, synapsetype=synapsetype, syn_opts=syn_opts)
+        self.pyramidal = populations.Pyramidal(hearing=self.hearing, loss_limit=self.loss_limit, synapsetype=synapsetype, syn_opts=syn_opts)
         self.tuberculoventral = populations.Tuberculoventral(synapsetype=synapsetype)
 
         pops = [
@@ -407,6 +407,7 @@ def main():
     parser.add_argument('--loss_limit', default=99e3, type=int, help='lower frequency limit for hearing loss')
     parser.add_argument('-if', '--input_frequency', type=int, help='input sound frequency (Hz), if not generating response map')
     parser.add_argument('-idb', '--input_level', default=60, type=int, help='input level (dB SPL) of single input sound')
+    parser.add_argument('-rt', '--response_type', type=str, choices=['III', 'IV'], help='pyramdial cell reponse type - only III and IV supported')
     parser.add_argument('-rm', '--response_map', action='store_true', help='generate response map')
     parser.add_argument('-rl', '--rate_level', action='store_true', help='generate rate level curve')
     parser.add_argument('-i', '--iterations', type=int, help='number of simulation iterations')
@@ -417,6 +418,10 @@ def main():
     parser.add_argument('--cihc', type=float, default=1.0, help='level of impairment of inner hair cells in cochlea model [0, 1]')
     parser.add_argument('--cohcs', action='store_true', help='run batch iterations of level of outer hair cell impairment')
     parser.add_argument('--cihcs', action='store_true', help='run batch iterations of level of inner hair cell impairment')
+    parser.add_argument('--hf', type=float, default=1.0, help='homeostasis factor')
+    parser.add_argument('--hp_loss', action='store_true', help='add homeostatic plasticiting to hearing loss range')
+    parser.add_argument('--hf_loss', type=float, default=1.0, help='homeostasis factor for hearing loss range')
+    parser.add_argument('--sgn_loss', type=float, default=0, help='percent loss of SGN inputs in hearing loss range')
     
     args = parser.parse_args()
 
@@ -474,7 +479,11 @@ def main():
     dt = 0.025
     syntype = "simple"  # simple or multisite
     loss_method = 'hc'
-    loss_frac = 70
+    if args.hp_loss:
+        loss_method += '_hf'
+    loss_frac = args.sgn_loss
+    if loss_frac > 0:
+        loss_method += f'_{loss_frac}'
     cohc = args.cohc
     cihc = args.cihc
 
@@ -488,7 +497,6 @@ def main():
         "response": [125, 225],
         }
 
-    resp_type = 'III'
 
     if args.response_map:
         sim_flag = f'{input_type}-{args.characteristic_frequency // 1000}kHZ_single_cell-{syntype}_syns-{len(fvals)}fs_{n_levels}ls-{args.iterations}nreps'
@@ -497,8 +505,14 @@ def main():
     else:
         sim_flag = f'{input_type}-{args.characteristic_frequency // 1000}kHZ_single_cell-{syntype}_syns-{args.input_frequency}Hz_{args.input_level}dB-{args.iterations}nreps'
 
-    if resp_type is not None:
-        sim_flag += f'-{resp_type}'
+    resp_type = args.response_type
+    response_weights = {'III': {'sgc': 0.00044,
+                                'tv': 0.0006,
+                                'ds': 0.002228},
+                        'IV': {'sgc': 0.00038,
+                                'tv': 0.0039,
+                                'ds': 0.002228}}
+    sim_flag += f'-{resp_type}'
 
     cwd = os.getcwd() # os.path.dirname(__file__)
     cachepath = os.path.join('/scratch/kedoxey', "cache")
@@ -507,7 +521,6 @@ def main():
     if args.include_ic:
         sim_flag += '_ic'
 
-    sim_flag += '-hf'
     cachepath += sim_flag
 
     print(cachepath)
@@ -526,13 +539,13 @@ def main():
 
         print('Running batch simulations')
 
-        homeostasis_factors = [1.01, 1.05, 1.1, 1.2, 1.3, 1.4]  # [0.3, 0.2, 0.1, 1, 1.5, 2, 2.5, 3]
+        homeostasis_factors = [0.3, 0.2, 0.1, 0.05, 1.25, 1.75, 2.5, 3.0]  # [0.3, 0.2, 0.1, 1, 1.5, 2, 2.5, 3]  1.01, 1.05, 1.1, 1.2, 1.3, 1.4, 
 
-        sgc_weight = 0.00044
-        tv_weight = 0.0006
-        ds_weight = 0.002228
+        sgc_weight = response_weights[resp_type]['sgc']
+        tv_weight = response_weights[resp_type]['tv']
+        ds_weight = response_weights[resp_type]['ds']
 
-        weight_combos = [(np.round(sgc_weight*hf,7), np.round(tv_weight/hf,7), np.round(ds_weight/hf,7)) for hf in homeostasis_factors]
+        # weight_combos = [(np.round(sgc_weight*hf,7), np.round(tv_weight/hf,7), np.round(ds_weight/hf,7)) for hf in homeostasis_factors]
 
         # sgc_weights = [0.00044, 0.0006, 0.0008]  # 0.0002, 0.00026, 0.000327, 0.00038 (IV), 0.00044 (III), 0.0005
         # tv_weights = [0.0003, 0.0001, 0.0006]  # 0.0006 (III), 0.0012, 0.0018, 0.0024, 0.002705, 0.003, 0.0033, 0.0036, 0.0039 (IV)
@@ -542,27 +555,27 @@ def main():
 
         cachepath_og = cachepath
         # syn_opts = []
-        for wc_i, weight_combo in enumerate(weight_combos): 
-
-            sgc_weight = weight_combo[0]
-            tv_weight = weight_combo[1]
-            ds_weight = weight_combo[2]
+        for hf_i, hf in enumerate(homeostasis_factors): 
 
             hear_dir = os.path.join(top_dir, f'COx{cohc}_CIx{cihc}') if 'loss' in args.hearing else top_dir
             if not os.path.exists(hear_dir):
                 os.mkdir(hear_dir)
 
-            sim_dir = os.path.join(hear_dir, f'SPx{sgc_weight}_VPx{tv_weight}_DPx{ds_weight}')
+            sim_dir = os.path.join(hear_dir, f'SPx{sgc_weight}_VPx{tv_weight}_DPx{ds_weight}-HFx{hf}')
             if not os.path.exists(sim_dir):
                 os.mkdir(sim_dir)
 
-            cachepath += f'COx{cohc}_CIx{cihc}-SPx{sgc_weight}_VPx{tv_weight}_DPx{ds_weight}'
+            cachepath += f'COx{cohc}_CIx{cihc}-SPx{sgc_weight}_VPx{tv_weight}_DPx{ds_weight}-HFx{hf}'
             if not os.path.isdir(cachepath):
                 os.mkdir(cachepath)
 
             syn_opts = {'sgc': {'weight': sgc_weight},
                         'tuberculoventral': {'weight': tv_weight},
                         'dstellate': {'weight': ds_weight}}
+            
+            syn_opts['hf_loss'] = {'sgc': sgc_weight*hf,
+                            'tuberculoventral': tv_weight/hf,
+                            'dstellate': ds_weight/hf}
             
             print(sim_dir)
 
@@ -584,7 +597,7 @@ def main():
             metadata['cf'] = args.characteristic_frequency
             metadata['syntype'] = syntype
             metadata['nresps'] = args.iterations
-            metadata['homeostais_factor'] = homeostasis_factors[wc_i]
+            metadata['homeostais_factor'] = hf
             metadata['hair_cell_impairment'] = {'Cohc': cohc,
                                                 'Cihc': cihc}
 

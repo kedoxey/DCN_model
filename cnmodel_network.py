@@ -19,7 +19,7 @@ import itertools
 start_t = time.time()
 
 class CharacterizeNetwork(Protocol):
-    def __init__(self, seed, frequencies, cells_per_band=1, loss_limit=99e3, temp=34.0, dt=0.025, 
+    def __init__(self, seed, frequencies, cells_per_band=1, loss_limit=99e3, loss_frac=0, temp=34.0, dt=0.025, 
                  hearing='normal', synapsetype="simple", enable_ic=False, cohc=1, cihc=1, syn_opts=None):
         Protocol.__init__(self)
 
@@ -32,13 +32,14 @@ class CharacterizeNetwork(Protocol):
         self.hearing = hearing  # normal or loss
         self.enable_ic = enable_ic
         self.loss_limit = loss_limit
+        self.loss_frac = loss_frac
 
         # Seed now to ensure network generation is stable
         random_seed.set_seed(seed)
         # Create cell populations.
         # This creates a complete set of _virtual_ cells for each population. No
         # cells are instantiated at this point.
-        self.sgc = populations.SGC(model="dummy", hearing=self.hearing, loss_limit=self.loss_limit, cohc=cohc, cihc=cihc)
+        self.sgc = populations.SGC(model="dummy", hearing=self.hearing, loss_limit=self.loss_limit, loss_frac=loss_frac, cohc=cohc, cihc=cihc)
         self.dstellate = populations.DStellate(synapsetype='simple')
         # self.tstellate = populations.TStellate()
         # if self.enable_ic:
@@ -107,7 +108,7 @@ class CharacterizeNetwork(Protocol):
 
         # Generate 2 new seeds for the SGC spike generator and for the NEURON simulation
         rs = np.random.RandomState()
-        rs.seed(self.seed)
+        rs.seed(self.seed+seed)
         seed1, seed2 = rs.randint(0, (2 ** 32) - 5, 2)
         random_seed.set_seed(seed1)
         self.sgc.set_seed(seed2)
@@ -254,7 +255,8 @@ class CharacterizeNetwork(Protocol):
                    'matrix': matrix}
         pickle.dump(rm_data, open(os.path.join(output_dir, f'DATA-{filename}.pkl'), 'wb'))
 
-    def save_stimulus_firing_rates(self, results, response, output_dir):
+
+    def save_pyramidal_firing_rates(self, results, response, baseline, output_dir):
 
         results_od = OrderedDict()
         max_iter = 0
@@ -277,34 +279,49 @@ class CharacterizeNetwork(Protocol):
         freqs = sorted(list(freqs))
         levels = sorted(list(levels))
 
-        avg_msfs = {}
+        avg_evoked_msfs = {}
+        avg_spont_msfs = {}
         for stim, iterations in list(results_od.values()):
 
-            stim_avg_msfs  = []
+            stim_avg_evoked_msfs  = []
+            stim_avg_spont_msfs  = []
 
             for vec in list(iterations.values()):
                 temp = 6
-                rep_avg_msfs = []
+                rep_avg_evoked_msfs = []
+                rep_avg_spont_msfs = []
 
                 for cf, ids in list(self.pyramidal_ids_per_band.items()):
 
-                    msfs = []
+                    evoked_msfs = []
+                    spont_msfs = []
                     for pyr_id in ids:
-                        spkt = vec[('pyramidal', pyr_id)][1]
-                        resp_spkt = spkt[((spkt >= response[0]) & (spkt <= response[1]))]
+                        spikes = vec[('pyramidal', pyr_id)][1]
+                        # resp_spkt = spkt[((spkt >= response[0]) & (spkt <= response[1]))]
 
-                        num_spikes = len(resp_spkt)
-                        num_isi = num_spikes - 1 if num_spikes > 0 else 0
-                        msf = num_isi / (resp_spkt[-1] - resp_spkt[0]) * 1000 if num_spikes > 1 else 1
-                        msfs.append(msf)
-                    rep_avg_msfs.append(np.mean(msfs))
+                        # num_spikes = len(resp_spkt)
+                        # num_isi = num_spikes - 1 if num_spikes > 0 else 0
+                        # msf = num_isi / (resp_spkt[-1] - resp_spkt[0]) * 1000 if num_spikes > 1 else 1
 
-                stim_avg_msfs.append(rep_avg_msfs)
+                        n_spont_spikes = ((spikes >= baseline[0]) & (spikes <= baseline[1])).sum()
+                        spont_msf = (n_spont_spikes / (baseline[1] - baseline[0])) * 1000
+                        spont_msfs.append(spont_msf)
+
+                        n_evoked_spikes = ((spikes >= response[0]) & (spikes <= response[1])).sum()
+                        evoked_msf = (n_evoked_spikes / (response[1] - response[0])) * 1000
+                        evoked_msfs.append(evoked_msf)
+
+                    rep_avg_evoked_msfs.append(np.mean(evoked_msfs))
+                    rep_avg_spont_msfs.append(np.mean(spont_msfs))
+
+                stim_avg_evoked_msfs.append(rep_avg_evoked_msfs)
+                stim_avg_spont_msfs.append(rep_avg_spont_msfs)
             
-            avg_msfs[stim] = np.average(np.array(stim_avg_msfs), axis=0)
+            avg_evoked_msfs[stim] = np.average(np.array(stim_avg_evoked_msfs), axis=0)
+            avg_spont_msfs[stim] = np.average(np.array(stim_avg_spont_msfs), axis=0)
 
-        filepath = os.path.join(output_dir, 'stim_avg_rates.pkl')
-        pickle.dump(avg_msfs, open(filepath, 'wb'))
+        pickle.dump(avg_evoked_msfs, open(os.path.join(output_dir, 'stim_avg_evoked_rates.pkl'), 'wb'))
+        pickle.dump(avg_evoked_msfs, open(os.path.join(output_dir, 'stim_avg_spont_rates.pkl'), 'wb'))
 
         metadata = {
             'populations': {'sgc': len(self.sgc.real_cells()),
@@ -313,10 +330,10 @@ class CharacterizeNetwork(Protocol):
                             'pyramidal': len(self.pyramidal.real_cells())}
         }
 
-        return avg_msfs, metadata
+        return avg_spont_msfs, avg_evoked_msfs, metadata
 
 
-    def plot_stimulus_firing_rates(self, avg_msfs, freqs, output_dir):
+    def plot_pyramidal_evoked_firing_rates(self, avg_msfs, freqs, output_dir):
 
         b = (freqs[-1] - freqs[0]) / np.log(freqs[-1] / freqs[0])
         a = freqs[0] - b * np.log(freqs[0])
@@ -342,6 +359,202 @@ class CharacterizeNetwork(Protocol):
         fig.tight_layout()
 
         filename = 'pyramidal_response_curve'
+        if 'loss' in self.hearing:
+            filename += '-loss'
+        fig.savefig(os.path.join(output_dir, f'{filename}.png'), dpi=300)
+
+
+    def reformat_results(self, results_df):
+
+        results_od = OrderedDict()
+        max_iter = 0
+        stim_order = []
+        freqs = set()
+        levels = set()
+
+        for k, v in list(results_df.items()):
+
+            f0, dbspl, iteration = k
+            max_iter = max(max_iter, iteration)
+            stim, result = v
+            key = "f0: %0.0f  dBspl: %0.0f" % (f0, dbspl)
+            results_od.setdefault(key, [stim,{}])
+            results_od[key][1][iteration] = result
+            stim_order.append((f0, dbspl))
+            freqs.add(f0)
+            levels.add(dbspl)
+
+        freqs = sorted(list(freqs))
+        levels = sorted(list(levels))
+
+        return freqs, levels, results_od
+
+
+    def get_evoked_firing_rates(self, cell_type, results, response, pyr_ids_per_band=None):
+
+        avg_rates = {}
+        cell_ids = {}
+
+        for stim, iterations in list(results.values()):
+
+            stim_avg_rates  = []
+            stim_cell_ids = []
+
+            n_reps = len(iterations)
+
+            for i in range(n_reps):
+
+                rep_rates = []
+                rep_cell_ids = []
+
+                for cell, vec in iterations[i].items():
+                # rep_avg_msfs = []
+
+                    if isinstance(cell, str):
+                        continue
+
+                    if cell_type in cell[0]:
+
+                        cell_id = cell[1]
+
+                        spikes = np.array(vec[1])
+                        n_spikes = ((spikes >= response[0]) & (spikes <= response[1])).sum()
+                        spike_rate = (n_spikes / (response[1] - response[0])) * 1000  # ms to s
+
+                        rep_rates.append(spike_rate)
+                        rep_cell_ids.append(cell_id)
+            
+                stim_avg_rates.append(rep_rates)
+                stim_cell_ids.append(rep_cell_ids)
+
+            stim_avg_rates = np.average(stim_avg_rates, axis=0)
+            
+            avg_rates[(stim.opts['f0'], stim.opts['dbspl'])] = stim_avg_rates
+            cell_ids[(stim.opts['f0'], stim.opts['dbspl'])] = stim_cell_ids[0]
+
+        return cell_ids, avg_rates
+    
+
+    def get_spontaneous_firing_rates(self, cell_type, results, baseline, pyr_ids_per_band=None):
+
+        avg_rates = {}
+        cell_ids = {}
+
+        for stim, iterations in list(results.values()):
+
+            stim_avg_rates  = []
+            stim_cell_ids = []
+
+            n_reps = len(iterations)
+
+            for i in range(n_reps):
+
+                rep_rates = []
+                rep_cell_ids = []
+
+                for cell, vec in iterations[i].items():
+                # rep_avg_msfs = []
+
+                    if isinstance(cell, str):
+                        continue
+
+                    if cell_type in cell[0]:
+
+                        cell_id = cell[1]
+
+                        spikes = np.array(vec[1])
+                        n_spikes = ((spikes >= baseline[0]) & (spikes <= baseline[1])).sum()
+                        spike_rate = (n_spikes / (baseline[1] - baseline[0])) * 1000  # ms to s
+
+                        rep_rates.append(spike_rate)
+                        rep_cell_ids.append(cell_id)
+            
+                stim_avg_rates.append(rep_rates)
+                stim_cell_ids.append(rep_cell_ids)
+
+            stim_avg_rates = np.average(stim_avg_rates, axis=0)
+            
+            avg_rates[(stim.opts['f0'], stim.opts['dbspl'])] = stim_avg_rates
+            cell_ids[(stim.opts['f0'], stim.opts['dbspl'])] = stim_cell_ids[0]
+
+        return cell_ids, avg_rates
+
+
+    def plot_network_firing_rates(self, results, stim, baseline, response, output_dir):
+
+        colors = {'pyramidal': 'tab:blue',
+                  'vertical': 'tab:green',
+                  'dstellate': 'tab:orange',
+                  'sgc': 'tab:purple'}
+        
+        freq = stim['freq']
+        level = stim['level']
+
+        pyr_cfs = self.pyramidal._get_cf_array(species='mouse')
+        vert_cfs = self.tuberculoventral._get_cf_array(species='mouse')
+        ds_cfs = self.dstellate._get_cf_array(species='mouse')
+        sgc_cfs = self.sgc._get_cf_array(species='mouse')
+
+        ### Evoked Activity ###
+        pyr_ids, pyr_rates = self.get_evoked_firing_rates('pyramidal', results, response)
+        ds_ids, ds_rates = self.get_evoked_firing_rates('dstellate', results, response)
+        vert_ids, vert_rates = self.get_evoked_firing_rates('tuberculoventral', results, response)
+        sgc_ids, sgc_rates = self.get_evoked_firing_rates('sgc', results, response)
+
+        fig, axs = plt.subplots(4,1,figsize=(15,8), sharex=True)  #, sharey=True)
+        axs = axs.ravel()
+
+        axs[0].plot(pyr_cfs[pyr_ids[(freq, level)]], pyr_rates[(freq, level)], color=colors['pyramidal'], zorder=13, alpha=0.8, label='pyramidal')
+        axs[0].legend(loc='upper right')
+
+        axs[1].plot(vert_cfs[vert_ids[(freq, level)]], vert_rates[(freq, level)], color=colors['vertical'], zorder=13, alpha=0.8, label='vertical')
+        axs[1].legend(loc='upper right')
+
+        axs[2].plot(ds_cfs[ds_ids[(freq, level)]], ds_rates[(freq, level)], color=colors['dstellate'], zorder=13, alpha=0.8, label='dstellate')
+        axs[2].legend(loc='upper right')
+
+        axs[3].plot(sgc_cfs[sgc_ids[(freq, level)]], sgc_rates[(freq, level)], color=colors['sgc'], zorder=13, alpha=0.8, label='sgc')
+        axs[3].legend(loc='upper right')
+
+        axs[-1].set_xlabel('Characteristic Frequency (Hz)')
+        axs[-1].set_ylabel('Firing Rate (Hz)')
+
+        fig.suptitle('Evoked Activity')
+        fig.tight_layout()
+
+        filename = 'population_evoked_activity'
+        if 'loss' in self.hearing:
+            filename += '-loss'
+        fig.savefig(os.path.join(output_dir, f'{filename}.png'), dpi=300)
+
+        ### Spontaneous Activity ###
+        pyr_ids, pyr_rates = self.get_spontaneous_firing_rates('pyramidal', results, baseline)
+        ds_ids, ds_rates = self.get_spontaneous_firing_rates('dstellate', results, baseline)
+        vert_ids, vert_rates = self.get_spontaneous_firing_rates('tuberculoventral', results, baseline)
+        sgc_ids, sgc_rates = self.get_spontaneous_firing_rates('sgc', results, baseline)
+
+        fig, axs = plt.subplots(4,1,figsize=(15,8), sharex=True)  #, sharey=True)
+        axs = axs.ravel()
+
+        axs[0].plot(pyr_cfs[pyr_ids[(freq, level)]], pyr_rates[(freq, level)], color=colors['pyramidal'], zorder=13, alpha=0.8, label='pyramidal')
+        axs[0].legend(loc='upper right')
+
+        axs[1].plot(vert_cfs[vert_ids[(freq, level)]], vert_rates[(freq, level)], color=colors['vertical'], zorder=13, alpha=0.8, label='vertical')
+        axs[1].legend(loc='upper right')
+
+        axs[2].plot(ds_cfs[ds_ids[(freq, level)]], ds_rates[(freq, level)], color=colors['dstellate'], zorder=13, alpha=0.8, label='dstellate')
+        axs[2].legend(loc='upper right')
+
+        axs[3].plot(sgc_cfs[sgc_ids[(freq, level)]], sgc_rates[(freq, level)], color=colors['sgc'], zorder=13, alpha=0.8, label='sgc')
+        axs[3].legend(loc='upper right')
+
+        axs[-1].set_xlabel('Characteristic Frequency (Hz)')
+        axs[-1].set_ylabel('Firing Rate (Hz)')
+
+        fig.suptitle('Spontaneous Activity')
+        fig.tight_layout()
+
+        filename = 'population_spontaneous_activity'
         if 'loss' in self.hearing:
             filename += '-loss'
         fig.savefig(os.path.join(output_dir, f'{filename}.png'), dpi=300)
@@ -382,6 +595,7 @@ def main():
     parser.add_argument('--hearing', type=str, choices=['normal', 'loss'], help='type of hearing')
     parser.add_argument('--loss_limit', type=int, default=99e3, help='lower limit for hearing loss (Hz) - default=None')
     parser.add_argument('-if', '--input_frequency', type=int, help='input sound frequency (Hz)')
+    parser.add_argument('-rt', '--response_type', type=str, choices=['III', 'IV'], help='pyramdial cell reponse type - only III and IV supported')
     parser.add_argument('-rm', '--response_map', action='store_true', help='create response map')
     parser.add_argument('-c', '--cells_per_band', type=int, help='number of pyramidal cells per characteristic frequency')
     parser.add_argument('-i', '--iterations', type=int, help='number of simulation iterations')
@@ -394,6 +608,8 @@ def main():
     parser.add_argument('--hf', type=float, default=1.0, help='homeostasis factor')
     parser.add_argument('--hp_loss', action='store_true', help='add homeostatic plasticiting to hearing loss range')
     parser.add_argument('--hf_loss', type=float, default=1.0, help='homeostasis factor for hearing loss range')
+    parser.add_argument('--sgn_loss', type=float, default=0, help='percent loss of SGN inputs in hearing loss range')
+    parser.add_argument('--octave_spacing', type=float, default=200.0, help='octave spacing for pyramidal cells')
     
     args = parser.parse_args()
 
@@ -403,7 +619,7 @@ def main():
     # nreps = args.iterations
     cf_fmin = 4e3   # 12e3 for response map otherwise 4e3
     cf_fmax = 40e3
-    cf_octavespacing = 1 / 200.0  # 0.5 -> 2, 1 -> 4, 16 -> 66, 32 -> 107, 64 -> 213, 200 -> 665
+    cf_octavespacing = 1 / args.octave_spacing # 0.5 -> 2, 1 -> 4, 16 -> 66, 32 -> 107, 64 -> 213, 200 -> 665
     cf_n_frequencies = int(np.log2(cf_fmax / cf_fmin) / cf_octavespacing) + 1
     cf_fvals = (
         np.logspace(
@@ -468,28 +684,36 @@ def main():
     syntype = "simple"
     loss_method = 'hc'
     if args.hp_loss:
-        loss_method += '_hf3'
-    loss_frac = 70
+        loss_method += '_hf'
+    loss_frac = args.sgn_loss
+    if loss_frac > 0:
+        loss_method += f'_{loss_frac}'
 
     cohc = args.cohc
     cihc = args.cihc
 
-    resp_type = 'III'
+    resp_type = args.response_type
+    response_weights = {'III': {'sgc': 0.00044,
+                                'tv': 0.0006,
+                                'ds': 0.002228},
+                        'IV': {'sgc': 0.00038,
+                                'tv': 0.0039,
+                                'ds': 0.002228}}
 
     hf = args.hf
 
-    sgc_weight = np.round(0.00044*hf, 7)  # type III - 0.00044, type IV - 0.00038, default - 0.000327
-    tv_weight = np.round(0.0006/hf, 7)    # type III - 0.0006, type IV - 0.0039, default - 0.0027
-    ds_weight = np.round(0.002228/hf, 7)
+    sgc_weight = np.round(response_weights[resp_type]['sgc']*hf, 7)  # type III - 0.00044, type IV - 0.00038, default - 0.000327
+    tv_weight = np.round(response_weights[resp_type]['tv']/hf, 7)    # type III - 0.0006, type IV - 0.0039, default - 0.0027
+    ds_weight = np.round(response_weights[resp_type]['ds']/hf, 7)
 
     syn_opts = {'sgc': {'weight': sgc_weight},
                 'tuberculoventral': {'weight': tv_weight},
                 'dstellate': {'weight': ds_weight}}
 
-    if args.hp_loss:
-        syn_opts['hf_loss'] = {'sgc': args.hf_loss*0.00001, 
-                               'tuberculoventral': -args.hf_loss*0.00001,
-                               'dstellate': -args.hf_loss*0.00001}
+    # if args.hp_loss:
+    syn_opts['hf_loss'] = {'sgc': sgc_weight*args.hf_loss,
+                            'tuberculoventral': tv_weight/args.hf_loss,
+                            'dstellate': ds_weight/args.hf_loss}
 
     stimpar = {
             "dur": 0.26,
@@ -563,7 +787,7 @@ def main():
                 os.mkdir(hc_dir)
 
             prot = CharacterizeNetwork(seed=seed, frequencies=cf_fvals, cells_per_band=args.cells_per_band, 
-                                    hearing=args.hearing, loss_limit=args.loss_limit, 
+                                    hearing=args.hearing, loss_limit=args.loss_limit, loss_frac=loss_frac,
                                     synapsetype=syntype, enable_ic=args.enable_ic,
                                     cohc=cohc, cihc=cihc, syn_opts=syn_opts)
             pickle.dump(prot.pyramidal_ids_per_band, open(os.path.join(hc_dir, 'pyramidal_ids_per_band.pkl'), 'wb'))
@@ -575,6 +799,8 @@ def main():
                         tasks.append((f, db, i))
 
             results = {}
+
+            print(sub_fig_dir)
 
             for i, task in enumerate(tasks):
 
@@ -607,19 +833,30 @@ def main():
                 
                 results[(f, db, iteration)] = (stim, result)
 
-            pickle.dump(results, open(os.path.join(hc_dir, 'results_df.pkl'), 'wb'))
+            results_od = prot.reformat_results(results)
+            pickle.dump(results_od, open(os.path.join(sub_fig_dir, 'results_od.pkl'), 'wb'))
 
-            avg_msfs, metadata = prot.save_stimulus_firing_rates(results, response=stimpar['response'], output_dir=hc_dir)
-            prot.plot_stimulus_firing_rates(avg_msfs, cf_fvals, hc_dir)
+            metadata = {
+                'populations': {'sgc': len(prot.sgc.real_cells()),
+                                'dstellate': len(prot.dstellate.real_cells()),
+                                'vertical': len(prot.tuberculoventral.real_cells()),
+                                'pyramidal': len(prot.pyramidal.real_cells())}
+            }
 
-            hair_cell_msfs[(cohc, cihc)] = avg_msfs
+            prot.plot_network_firing_rates(results_od, {'freq': args.input_frequency, 'level': levels[0]}, 
+                                           stimpar['baseline'], stimpar['response'], output_dir=sub_fig_dir)
 
-        plot_hair_cell_firing_rates(hair_cell_msfs, cf_fvals, fig_dir)
+            # avg_msfs, metadata = prot.save_stimulus_firing_rates(results, response=stimpar['response'], output_dir=hc_dir)
+        #     prot.plot_stimulus_firing_rates(avg_msfs, cf_fvals, hc_dir)
+
+        #     hair_cell_msfs[(cohc, cihc)] = avg_msfs
+
+        # plot_hair_cell_firing_rates(hair_cell_msfs, cf_fvals, fig_dir)
 
     else:
 
         prot = CharacterizeNetwork(seed=seed, frequencies=cf_fvals, cells_per_band=args.cells_per_band, 
-                                   hearing=args.hearing, loss_limit=args.loss_limit, 
+                                   hearing=args.hearing, loss_limit=args.loss_limit, loss_frac=loss_frac,
                                    synapsetype=syntype, enable_ic=args.enable_ic,
                                    cohc=cohc, cihc=cihc, syn_opts=syn_opts)
         pickle.dump(prot.pyramidal_ids_per_band, open(os.path.join(sub_fig_dir, 'pyramidal_ids_per_band.pkl'), 'wb'))
@@ -663,10 +900,21 @@ def main():
             
             results[(f, db, iteration)] = (stim, result)
 
-        pickle.dump(results, open(os.path.join(sub_fig_dir, 'results_df.pkl'), 'wb'))
+        _, _, results_od = prot.reformat_results(results)
+        pickle.dump(results_od, open(os.path.join(sub_fig_dir, 'results_od.pkl'), 'wb'))
 
-        avg_msfs, metadata = prot.save_stimulus_firing_rates(results, response=stimpar['response'], output_dir=sub_fig_dir)
-        prot.plot_stimulus_firing_rates(avg_msfs, cf_fvals, sub_fig_dir)
+        metadata = {
+            'populations': {'sgc': len(prot.sgc.real_cells()),
+                            'dstellate': len(prot.dstellate.real_cells()),
+                            'vertical': len(prot.tuberculoventral.real_cells()),
+                            'pyramidal': len(prot.pyramidal.real_cells())}
+        }
+
+        prot.plot_network_firing_rates(results_od, {'freq': args.input_frequency, 'level': levels[0]}, 
+                                       stimpar['baseline'], stimpar['response'], output_dir=sub_fig_dir)
+
+        # avg_msfs, metadata = prot.save_stimulus_firing_rates(results, response=stimpar['response'], output_dir=sub_fig_dir)
+        # prot.plot_stimulus_firing_rates(avg_msfs, cf_fvals, sub_fig_dir)
         # prot.plot_results(nreps, results, baseline=stimpar['baseline'], response=stimpar['response'], output_dir=fig_dir)
 
     metadata['stimpar'] = stimpar
@@ -675,7 +923,12 @@ def main():
     metadata['cfs'] = {'low': cf_fmin,
                     'hight': cf_fmax}
     metadata['synapse type'] = syntype
-    metadata['synapse weights'] = syn_opts
+    metadata['synapse weights'] = {'sgc': {'weight': float(sgc_weight)},
+                                   'tuberculoventral': {'weight': float(tv_weight)},
+                                   'dstellate': {'weight': float(ds_weight)},
+                                   'hf_loss': {'sgc': float(sgc_weight*args.hf_loss),
+                                               'tuberculoventral': float(tv_weight/args.hf_loss),
+                                               'dstellate': float(ds_weight/args.hf_loss)}}
 
     end_t = time.time()
     elapsed_t = end_t-start_t
@@ -683,8 +936,6 @@ def main():
     minutes, seconds = divmod(remainder,60)
     metadata['runtime'] = f'{int(hours)}h:{int(minutes)}m:{int(seconds)}s'
     
-    if args.enable_ic:
-        metadata['populations']['ic'] = len(self.ic.real_cells())
     # temp = 5
     filename = os.path.join(sub_fig_dir, f'metadata')
     if 'loss' in args.hearing:
