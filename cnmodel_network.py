@@ -684,7 +684,7 @@ def main():
     syntype = "simple"
     loss_method = 'hc'
     if args.hp_loss:
-        loss_method += '_hf'
+        loss_method += '_hf_P'
     loss_frac = args.sgn_loss
     if loss_frac > 0:
         loss_method += f'_{loss_frac}'
@@ -740,7 +740,7 @@ def main():
         sim_flag += f'-{args.loss_limit}loss-{loss_method}'
 
     cwd = os.getcwd() # os.path.dirname(__file__)
-    cachepath = os.path.join('/scratch/kedoxey', "cache_network")
+    cachepath = os.path.join('/data/scrook/scratch', "cache_network")
     cachepath += sim_flag
 
     print(cachepath)
