@@ -9,6 +9,7 @@ import argparse
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 import matplotlib.cm as cm
 from neuron import h
 import multiprocessing as mp
@@ -16,7 +17,30 @@ import yaml
 from scipy.signal import savgol_filter
 from matplotlib.ticker import ScalarFormatter
 import itertools
+import compress_pickle
 import seaborn as sns
+
+COMPRESSION = 'gzip'
+
+parula_colors = [(0.2081, 0.1663, 0.5292), (0.2116, 0.1898, 0.5777), (0.2123, 0.2138, 0.6270), (0.2081, 0.2386, 0.6771), 
+                (0.1959, 0.2645, 0.7279), (0.1707, 0.2919, 0.7792), (0.1253, 0.3242, 0.8303), (0.0591, 0.3598, 0.8683), 
+                (0.0117, 0.3875, 0.8819), (0.0060, 0.4086, 0.8828), (0.0165, 0.4266, 0.8786), (0.0329, 0.4430, 0.8720), 
+                (0.0498, 0.4586, 0.8641), (0.0629, 0.4737, 0.8554), (0.0723, 0.4887, 0.8467), (0.0779, 0.5040, 0.8384), 
+                (0.0793, 0.5200, 0.8312), (0.0749, 0.5375, 0.8263), (0.0641, 0.5570, 0.8240), (0.0488, 0.5772, 0.8228), 
+                (0.0343, 0.5966, 0.8199), (0.0265, 0.6137, 0.8135), (0.0239, 0.6287, 0.8038), (0.0231, 0.6418, 0.7913), 
+                (0.0228, 0.6535, 0.7768), (0.0267, 0.6642, 0.7607), (0.0384, 0.6743, 0.7436), (0.0590, 0.6838, 0.7254), 
+                (0.0843, 0.6928, 0.7062), (0.1133, 0.7015, 0.6859), (0.1453, 0.7098, 0.6646), (0.1801, 0.7177, 0.6424), 
+                (0.2178, 0.7250, 0.6193), (0.2586, 0.7317, 0.5954), (0.3022, 0.7376, 0.5712), (0.3482, 0.7424, 0.5473), 
+                (0.3953, 0.7459, 0.5244), (0.4420, 0.7481, 0.5033), (0.4871, 0.7491, 0.4840), (0.5300, 0.7491, 0.4661), 
+                (0.5709, 0.7485, 0.4494), (0.6099, 0.7473, 0.4337), (0.6473, 0.7456, 0.4188), (0.6834, 0.7435, 0.4044), 
+                (0.7184, 0.7411, 0.3905), (0.7525, 0.7384, 0.3768), (0.7858, 0.7356, 0.3633), (0.8185, 0.7327, 0.3498), 
+                (0.8507, 0.7299, 0.3360), (0.8824, 0.7274, 0.3217), (0.9139, 0.7258, 0.3063), (0.9450, 0.7261, 0.2886), 
+                (0.9739, 0.7314, 0.2666), (0.9938, 0.7455, 0.2403), (0.9990, 0.7653, 0.2164), (0.9955, 0.7861, 0.1967), 
+                (0.9880, 0.8066, 0.1794), (0.9789, 0.8271, 0.1633), (0.9697, 0.8481, 0.1475), (0.9626, 0.8705, 0.1309), 
+                (0.9589, 0.8949, 0.1132), (0.9598, 0.9218, 0.0948), (0.9661, 0.9514, 0.0755), (0.9763, 0.9831, 0.0538)]
+
+# Create the colormap
+parula_cmap = mpl.colors.LinearSegmentedColormap.from_list('parula', parula_colors, N=256)
 
 start_t = time.time()
 
@@ -152,9 +176,9 @@ class CharacterizeNetwork(Protocol):
             max_iter = max(max_iter, iteration)
             stim, result = v
             key = 'f0: %0.0f' % f0 if not isinstance(f0, str) else f'f0: {f0}'
-            key += '  dBspl %0.0f' % dbspl
+            key += '  dBspl: %0.0f' % dbspl
             # key = "f0: %0.0f  dBspl: %0.0f" % (f0, dbspl) 
-            results_od.setdefault(key, [stim,{}])
+            results_od.setdefault(key, [stim.opts,{}])
             results_od[key][1][iteration] = result
             stim_order.append((f0, dbspl))
             freqs.add(f0)
@@ -175,7 +199,7 @@ class CharacterizeNetwork(Protocol):
         cell_ind = self.pyramidal_ids_per_band[cf][0]
 
         for stim, iterations in list(results.values()):
-            print(stim.key()['f0'], stim.key()['dbspl'])
+            print(stim['f0'], stim['dbspl'])
             for vec in list(iterations.values()):
                 spikes = vec[(pop_type, cell_ind)][1]
                 spont_spikes += ((spikes >= baseline[0]) * (spikes < baseline[1])).sum()
@@ -183,8 +207,9 @@ class CharacterizeNetwork(Protocol):
 
         spont_rate = spont_spikes / spont_time
 
-        matrix_exact = np.zeros((len(levels), len(freqs)))
-        matrix = np.zeros((len(levels), len(freqs)))
+        matrix_spont = np.zeros((len(levels), len(freqs)))
+        matrix_evoked = np.zeros((len(levels), len(freqs)))
+        matrix_diff = np.zeros((len(levels), len(freqs)))
 
         for stim, iteration in list(results.values()):
 
@@ -192,29 +217,36 @@ class CharacterizeNetwork(Protocol):
 
                 vec = iteration[i]
                 spikes = vec[(pop_type, cell_ind)][1]
-                n_spikes = ((spikes >= response[0]) & (spikes < response[1])).sum()
+                n_spikes_s = ((spikes >= baseline[0]) & (spikes < baseline[1])).sum()
+                n_spikes_e = ((spikes >= response[0]) & (spikes < response[1])).sum()
 
-                freq = stim.key()['f0']
-                level = stim.key()['dbspl']
+                spont_rate = (n_spikes_s / (baseline[1] - baseline[0])) * 1000 
+                evoked_rate = (n_spikes_e / (response[1] - response[0])) * 1000 
+
+                freq = stim['f0']
+                level = stim['dbspl']
 
                 j = freqs.index(freq)
                 i = levels.index(level)
 
                 # response_map_df.loc[level, [freq]] += n_spikes - spont_rate * (response[1] - response[0])
-                matrix_exact[i,j] += n_spikes
-                matrix[i,j] += n_spikes - spont_rate * (response[1] - response[0])
+                matrix_spont[i,j] += spont_rate
+                matrix_evoked[i,j] += evoked_rate
+                matrix_diff[i,j] += evoked_rate - spont_rate
 
-        matrix_exact /= nreps
-        matrix /= nreps
-        matrix_norm = matrix / np.max(np.abs(matrix))
+        matrix_spont /= nreps
+        matrix_evoked /= nreps
+        matrix_diff /= nreps
+        matrix_diff_norm = matrix_diff / np.max(np.abs(matrix_diff))
 
         b = (freqs[-1] - freqs[0]) / np.log(freqs[-1] / freqs[0])
         a = freqs[0] - b * np.log(freqs[0])
         freqs_log = a + b * np.log(freqs)
 
-        cmap = sns.color_palette("icefire", as_cmap=True)
+        # cmap = sns.color_palette("icefire", as_cmap=True)
+        cmap = parula_cmap
 
-        for m_type, m in zip(['raw', 'norm'], [matrix, matrix_norm]):
+        for m_type, m in zip(['spont', 'evoked', 'diff', 'diff_norm'], [matrix_spont, matrix_evoked, matrix_diff, matrix_diff_norm]):
             fig, axs = plt.subplots(1,1,figsize=(5,4))
 
             if 'norm' in m_type:
@@ -243,8 +275,12 @@ class CharacterizeNetwork(Protocol):
         rm_data = {'freqs': freqs,
                    'freqs_log': freqs_log,
                    'levels': levels,
-                   'matrix': matrix}
-        pickle.dump(rm_data, open(os.path.join(output_dir, f'DATA-{filename}.pkl'), 'wb'))
+                   'matrix_spont': matrix_spont,
+                   'matrix_evoked': matrix_evoked,
+                   'matrix_diff': matrix_diff,
+                   'matrix_diff_norm': matrix_diff_norm}
+        pickle.dump(rm_data, open(os.path.join(output_dir, f'DATA-{len(freqs)}fs_{len(levels)}dbs_{cf}cf-response_maps.pkl'), 'wb'))
+        # compress_pickle.dump(rm_data, open(os.path.join(output_dir, f'DATA-{filename}.pkl'), 'wb'), compression='gzip')
 
 
     def plot_rate_level_curve(self, cf, nreps, freqs, levels, results, baseline, response, output_dir):
@@ -275,15 +311,15 @@ class CharacterizeNetwork(Protocol):
                 spikes = vec[(pop_type, cell_ind)][1]
                 n_spikes = ((spikes >= response[0]) & (spikes < response[1])).sum()
 
-                # freq = stim.key()['f0']
-                freq = 'bbn' if 'f0' not in stim.opts.keys() else stim.key()['f0']
-                level = stim.key()['dbspl']
+                # freq = stim['f0']
+                freq = 'bbn' if 'f0' not in stim.keys() else stim['f0']
+                level = stim['dbspl']
 
                 j = freqs.index(freq)
                 i = levels.index(level)
 
                 # response_map_df.loc[level, [freq]] += n_spikes - spont_rate * (response[1] - response[0])
-                matrix_exact[i,j] += n_spikes
+                matrix_exact[i,j] += (n_spikes / (response[1] - response[0])) * 1000
                 matrix[i,j] += n_spikes - spont_rate * (response[1] - response[0])
 
         matrix_exact /= nreps
@@ -299,7 +335,7 @@ class CharacterizeNetwork(Protocol):
         axs.set_xlabel('Sound Level (dB SPL)')
         axs.set_ylabel('Evoked Firing Rate (spikes/s)')
 
-        axs.set_title('Characteristic Frequency Rate Level Curve')
+        axs.set_title(f'{int(cf // 1e3)}kHz CF Rate Level Curve')
 
         fig.tight_layout()
 
@@ -310,8 +346,9 @@ class CharacterizeNetwork(Protocol):
 
         rm_data = {'freqs': freqs,
                    'levels': levels,
-                   'matrix': matrix}
-        pickle.dump(rm_data, open(os.path.join(output_dir, f'DATA-{filename}.pkl'), 'wb'))
+                   'matrix': matrix_exact}
+        # pickle.dump(rm_data, open(os.path.join(output_dir, f'DATA-{filename}.pkl'), 'wb'))
+        compress_pickle.dump(rm_data, open(os.path.join(output_dir, f'DATA-{filename}.pkl'), 'wb'), compression=COMPRESSION)
 
 
     def get_evoked_firing_rates(self, cell_type, results, response, pyr_ids_per_band=None):
@@ -353,7 +390,7 @@ class CharacterizeNetwork(Protocol):
 
             stim_avg_rates = np.average(stim_avg_rates, axis=0)
             
-            rates_key = ('bbn', stim.opts['dbspl']) if 'f0' not in stim.opts.keys() else (stim.opts['f0'], stim.opts['dbspl'])
+            rates_key = ('bbn', stim['dbspl']) if 'f0' not in stim.keys() else (stim['f0'], stim['dbspl'])
             avg_rates[rates_key] = stim_avg_rates
             cell_ids[rates_key] = stim_cell_ids[0]
 
@@ -399,7 +436,7 @@ class CharacterizeNetwork(Protocol):
 
             stim_avg_rates = np.average(stim_avg_rates, axis=0)
             
-            rates_key = ('bbn', stim.opts['dbspl']) if 'f0' not in stim.opts.keys() else (stim.opts['f0'], stim.opts['dbspl'])
+            rates_key = ('bbn', stim['dbspl']) if 'f0' not in stim.keys() else (stim['f0'], stim['dbspl'])
             avg_rates[rates_key] = stim_avg_rates
             cell_ids[rates_key] = stim_cell_ids[0]
 
@@ -442,8 +479,7 @@ class CharacterizeNetwork(Protocol):
                        'tuberculoventral': self.get_spontaneous_firing_rates('tuberculoventral', results, baseline),
                        'dstellate': self.get_spontaneous_firing_rates('dstellate', results, baseline),
                        'sgc': self.get_spontaneous_firing_rates('sgc', results, baseline)}
-
-        
+                
         for firing_type, firing_rates in zip(['evoked', 'spontaneous'], [evoked_rates, spont_rates]):
 
             pyr_ids, pyr_rates = firing_rates['pyramidal']
@@ -466,17 +502,17 @@ class CharacterizeNetwork(Protocol):
                 axs[0].set_xticks([5000, 10000, 15000, 20000, 25000, 30000, 35000, 40000])
                 axs[0].xaxis.set_major_formatter(ScalarFormatter())
             else:
-                key = 'f0: %0.0f' % f0 if not isinstance(freq, str) else f'f0: {freq}'
-                key += '  dBspl %0.0f' % level
+                key = 'f0: %0.0f' % freq if not isinstance(freq, str) else f'f0: {freq}'
+                key += '  dBspl: %0.0f' % level
                 t = results[key][1][0]['t']
                 pyr_id = pyr_ids[(freq, level)][0]
                 # pyr_v = np.array([results[f'f0: {freq}  dBspl: {level}'][1][i][('pyramidal', pyr_id)][0] for i in range(nreps)])
                 # pyr_v_avg = np.average(pyr_v, axis=0)
                 pyr_v = results[key][1][int(np.floor(nreps/2))][('pyramidal', pyr_id)][0]
                 axs[0].plot(t, pyr_v, color=colors['pyramidal'], zorder=13, label='pyramidal')
-                axs[0].axvspan(response[0], response[1], color='grey', alpha=0.1, zorder=1)
+                axs[0].axvspan(response[0], response[1], color='grey', alpha=0.3, zorder=1)
                 # axs[0].legend(loc='upper right')
-                axs[0].set_title('Pyramidal')
+                axs[0].set_title(f'Pyramidal - {pyr_rates[(freq, level)]}')
                 axs[0].set_xlabel('Time (ms)')
                 axs[0].set_ylabel('Voltage (mV)')
                 axs[0].set_xlim([t[0], t[-1]])
@@ -516,6 +552,13 @@ class CharacterizeNetwork(Protocol):
                 filename += '-loss'
             fig.savefig(os.path.join(output_dir, f'{filename}.png'), dpi=300)
         
+        fr_data = {'spont_rates': spont_rates,
+                   'evoked_rates': evoked_rates}
+        pickle.dump(fr_data, open(os.path.join(output_dir, f'DATA-firing_rates.pkl'), 'wb'))
+        print('!! PYRAMIDAL FIRING RATE DATA !!')
+        print(f"SPONTANEOUS - {spont_rates['pyramidal']}")
+        print(f"EVOKED - {evoked_rates['pyramidal']}")
+
 
     def plot_results(self, cf, nreps, freqs, levels, results, baseline, response, input_type, output_dir):
 
@@ -538,12 +581,20 @@ def main():
     parser.add_argument('-c', '--cells_per_band', type=int, default=1, help='number of pyramidal cells per characteristic frequency')
     parser.add_argument('-i', '--iterations', type=int, help='number of simulation iterations')
     parser.add_argument('-f', '--force_run', action='store_true', help='force run cell simulation')
+    parser.add_argument('-vs', '--verbose_save', action='store_true', default=False, help='save all outputs of simulation')
+    parser.add_argument('--full_spont', action='store_true', default=False, help='10 second stimulus conditions for simulation to calcualte spontaneous firing rate')
 
     parser.add_argument('-if', '--input_frequency', type=int, help='input sound frequency (Hz)')
     parser.add_argument('-bbn', action='store_true', help='broadband noise input')
     parser.add_argument('-idb', '--input_level', default=60, type=int, help='input level (dB SPL) of single input sound')
     parser.add_argument('-rm', '--response_map', action='store_true', help='create response map')
+    parser.add_argument('--rm_fs', type=int, default=25, help='number of frequencies in response map')
+    parser.add_argument('--rm_ls', type=int, default=11, help='number of sound levels in response map')
     parser.add_argument('-rl', '--rate_level', action='store_true', help='generate rate level curve')
+
+    parser.add_argument('-sp', type=float, default=-1, help='sgc -> pyramidal synaptic weight')
+    parser.add_argument('-vp', type=float, default=-1, help='vertical -> pyramidal synaptic weight')
+    parser.add_argument('-dp', type=float, default=-1, help='dstellate -> pyramidal synaptic weight')
 
     parser.add_argument('--hearing', type=str, choices=['normal', 'loss'], help='type of hearing')
     parser.add_argument('--loss_limit', type=int, default=99e3, help='lower limit for hearing loss (Hz) - default=None')
@@ -564,8 +615,10 @@ def main():
 
         fmin = 4e3
         fmax = 32e3
-        octavespacing = 1 / 8.0  # 2 -> 7, 4 -> 13, 8 -> 25, 16 -> 66, 32 -> , 64 -> 262
-        n_frequencies = int(np.log2(fmax / fmin) / octavespacing) + 1
+        # octavespacing = 1 / 8.0  # 2 -> 7, 4 -> 13, !8 -> 25!, 16 -> 66, 32 -> , 64 -> 262
+        # n_frequencies = int(np.log2(fmax / fmin) / octavespacing) + 1
+        n_frequencies = args.rm_fs
+        octavespacing = np.log2(fmax / fmin) / (n_frequencies - 1)
         input_fvals = (
             np.logspace(
                 np.log2(fmin / 1000.0),
@@ -577,7 +630,7 @@ def main():
             * 1000.0
         )
 
-        n_levels = 11  # 2 for debugging, 11 for full, 6 for small response map
+        n_levels = args.rm_ls  # 2 for debugging, 11 for full, 6 for small response map
         levels = np.linspace(20, 100, n_levels)  # 20, 100, n_levels
 
         input_type = 'response_map'
@@ -595,7 +648,7 @@ def main():
 
         input_type = 'rate_level'
         input_info = f'{args.input_frequency // 1000}kHz' if not args.bbn else 'BBN'
-        input_info += f'_{args.input_level}dB'
+        input_info += f'_{n_levels}ls'
 
     else:
 
@@ -650,13 +703,20 @@ def main():
     #     "response": [150, 250]
     #     }
 
-    stimpar = {
-        "dur": 0.26,
-        "pip": 0.1,
-        "start": [0.125],
-        "baseline": [25, 125],
-        "response": [125, 225]
-        }
+    if args.full_spont:
+
+        stimpar = {"dur": 1.25,
+                   "pip": 1,
+                   "start": [0.25],
+                   "baseline": [0, 250],
+                   "response": [250, 1250]}
+    else:
+
+        stimpar = {"dur": 0.26,
+                   "pip": 0.1,
+                   "start": [0.125],
+                   "baseline": [25, 125],
+                   "response": [125, 225]}
 
     syntype = "simple"
     loss_method = 'hc'
@@ -666,15 +726,22 @@ def main():
     if loss_frac > 0:
         loss_method += f'_{loss_frac}'
 
-    response_weights = {'III': {'sgc': 0.00044,
-                                'tv': 0.0006,
-                                'ds': 0.002228},
-                        'IV': {'sgc': 0.00038,
-                                'tv': 0.0039,
+    response_weights = {'III': {'sgc': 0.00036,
+                                 'tv': 0.0014,
+                                 'ds': 0.002228},
+                        'IV': {'sgc': 0.00028,
+                                'tv': 0.0038,
                                 'ds': 0.002228}}
+
+    if args.sp != -1:
+        response_weights[args.response_type]['sgc'] = args.sp
+    if args.vp != -1:
+        response_weights[args.response_type]['tv'] = args.vp
+    if args.dp != -1:
+        response_weights[args.response_type]['ds'] = args.dp
     
-    sgc_weight = np.round(response_weights[args.response_type]['sgc']*args.hf, 7)  # type III - 0.00044, type IV - 0.00038, default - 0.000327
-    tv_weight = np.round(response_weights[args.response_type]['tv']/args.hf, 7)    # type III - 0.0006, type IV - 0.0039, default - 0.0027
+    sgc_weight = np.round(response_weights[args.response_type]['sgc']*args.hf, 7)  # type III - 0.00036, type IV - 0.00028, default - 0.000327
+    tv_weight = np.round(response_weights[args.response_type]['tv']/args.hf, 7)    # type III - 0.0014, type IV - 0.0038, default - 0.0027
     ds_weight = np.round(response_weights[args.response_type]['ds']/args.hf, 7)
 
     syn_opts = {'sgc': {'weight': sgc_weight},
@@ -728,7 +795,8 @@ def main():
                                    hearing=args.hearing, loss_limit=args.loss_limit, loss_frac=loss_frac,
                                    synapsetype=syntype,
                                    cohc=args.cohc, cihc=args.cihc, syn_opts=syn_opts)
-    pickle.dump(prot.pyramidal_ids_per_band, open(os.path.join(weight_dir, 'pyramidal_ids_per_band.pkl'), 'wb'))
+    # pickle.dump(prot.pyramidal_ids_per_band, open(os.path.join(weight_dir, 'pyramidal_ids_per_band.pkl'), 'wb'))
+    compress_pickle.dump(prot.pyramidal_ids_per_band, open(os.path.join(weight_dir, 'pyramidal_ids_per_band.pkl'), 'wb'), compression=COMPRESSION)
 
     tasks = []
     for f in input_fvals:
@@ -762,6 +830,8 @@ def main():
                 pip_start=stimpar["start"],
             )
 
+        ## TODO: notch noise
+
         cachefile = os.path.join(cachepath, f'seed={seed}_nfs={len(cf_fvals)}_f0={f}_dbspl={db}_cpb={args.cells_per_band}_syntype={syntype}_iter={iteration}')
         print(f'cache file exists - {bool(os.path.isfile(cachefile))}')
 
@@ -773,15 +843,19 @@ def main():
             p1.start()
             p1.join()
             result = dict(result)
-            pickle.dump(result, open(cachefile, 'wb'))
+            # pickle.dump(result, open(cachefile, 'wb'))
+            compress_pickle.dump(result, open(cachefile, 'wb'), compression=COMPRESSION)
         else:
             print(f'loading - f = {f}, dbspl = {db}')
-            result = pickle.load(open(cachefile, 'rb'))
+            # result = pickle.load(open(cachefile, 'rb'))
+            result = compress_pickle.load(open(cachefile, 'rb'), compression=COMPRESSION)
         
         results[(f, db, iteration)] = (stim, result)
 
     freqs, levels, results_od = prot.reformat_results(results)
-    pickle.dump(results_od, open(os.path.join(weight_dir, 'results_od.pkl'), 'wb'))
+    # pickle.dump(results_od, open(os.path.join(weight_dir, 'results_od.pkl'), 'wb'))
+    if args.verbose_save:
+        compress_pickle.dump(results_od, open(os.path.join(weight_dir, 'results_od.pkl'), 'wb'), compression=COMPRESSION)
 
     metadata = {
         'populations': {'sgc': len(prot.sgc.real_cells()),

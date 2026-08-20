@@ -21,7 +21,7 @@ start_t = time.time()
 
 class CNSoundStim(Protocol):
     def __init__(self, seed, characteristic_frequency, temp=34.0, dt=0.025, 
-                 hearing='normal', loss_limit=99e3, cohc=1.0, cihc=1.0,
+                 hearing='normal', loss_limit=99e3, loss_frac=0, cohc=1.0, cihc=1.0,
                  synapsetype="simple", syn_opts=None, include_ic=False, pyr_erev=-62):
         Protocol.__init__(self)
 
@@ -33,6 +33,7 @@ class CNSoundStim(Protocol):
         self.syn_opts = syn_opts
         self.hearing = hearing  # normal or loss
         self.loss_limit = loss_limit
+        self.loss_frac = loss_frac
         self.include_ic = include_ic
 
         # Seed now to ensure network generation is stable
@@ -40,7 +41,7 @@ class CNSoundStim(Protocol):
         # Create cell populations.
         # This creates a complete set of _virtual_ cells for each population. No
         # cells are instantiated at this point.
-        self.sgc = populations.SGC(model="dummy", synapsetype=synapsetype, hearing=self.hearing, loss_limit=self.loss_limit, cohc=cohc, cihc=cihc)
+        self.sgc = populations.SGC(model="dummy", synapsetype=synapsetype, hearing=self.hearing, loss_frac=loss_frac, loss_limit=self.loss_limit, cohc=cohc, cihc=cihc)
         self.dstellate = populations.DStellate(synapsetype=synapsetype)
         # self.tstellate = populations.TStellate()
         # if self.include_ic:
@@ -211,6 +212,7 @@ class CNSoundStim(Protocol):
 
         spont_rate = spont_spikes / spont_time
 
+        matrix_exact = np.zeros((len(levels), len(freqs)))
         matrix = np.zeros((len(levels), len(freqs)))
 
         for stim, iteration in list(results_od.values()):
@@ -228,8 +230,10 @@ class CNSoundStim(Protocol):
                 i = levels.index(level)
 
                 # response_map_df.loc[level, [freq]] += n_spikes - spont_rate * (response[1] - response[0])
+                matrix_exact[i,j] += n_spikes
                 matrix[i,j] += n_spikes - spont_rate * (response[1] - response[0])
 
+        matrix_exact /= nreps
         matrix /= nreps
 
         b = (freqs[-1] - freqs[0]) / np.log(freqs[-1] / freqs[0])
@@ -280,8 +284,9 @@ class CNSoundStim(Protocol):
 
             fig, axs = plt.subplots(1,1,figsize=(5,4))
 
-            axs.plot(levels, matrix[:,cf_freq_idx])
+            axs.plot(levels, matrix_exact[:,cf_freq_idx])
 
+            axs.set_ylim(bottom=0)
             axs.set_xlabel('Sound Level (dB SPL)')
             axs.set_ylabel('Evoked Firing Rate (spikes/s)')
 
@@ -289,7 +294,7 @@ class CNSoundStim(Protocol):
 
             fig.tight_layout()
 
-            filename = f'{len(freqs)}fs_{len(levels)}dbs_{self.characteristic_frequency}cf-rate_level_curve'
+            filename = f'{len(freqs)}fs_{len(levels)}dbs_{self.characteristic_frequency}cf-rate_level_curveE'
             if 'loss' in self.hearing:
                 filename += '-loss'
             if self.include_ic:
@@ -409,7 +414,6 @@ def main():
     parser.add_argument('-idb', '--input_level', default=60, type=int, help='input level (dB SPL) of single input sound')
     parser.add_argument('-rt', '--response_type', type=str, choices=['III', 'IV'], help='pyramdial cell reponse type - only III and IV supported')
     parser.add_argument('-rm', '--response_map', action='store_true', help='generate response map')
-    parser.add_argument('-rl', '--rate_level', action='store_true', help='generate rate level curve')
     parser.add_argument('-i', '--iterations', type=int, help='number of simulation iterations')
     parser.add_argument('-cf', '--characteristic_frequency', type=int, help='characteristic frequency (Hz) of pyramidal cell')
     parser.add_argument('-f', '--force_run', action='store_true', help='force run cell simulation')
@@ -515,7 +519,7 @@ def main():
     sim_flag += f'-{resp_type}'
 
     cwd = os.getcwd() # os.path.dirname(__file__)
-    cachepath = os.path.join('/scratch/kedoxey', "cache")
+    cachepath = os.path.join('/data/scrook/scratch', "cache")
     if 'loss' in args.hearing:
         sim_flag += f'_{args.loss_limit}loss-{loss_method}'
     if args.include_ic:
@@ -539,7 +543,7 @@ def main():
 
         print('Running batch simulations')
 
-        homeostasis_factors = [0.3, 0.2, 0.1, 0.05, 1.25, 1.75, 2.5, 3.0]  # [0.3, 0.2, 0.1, 1, 1.5, 2, 2.5, 3]  1.01, 1.05, 1.1, 1.2, 1.3, 1.4, 
+        homeostasis_factors = [1.0]  # [0.3, 0.2, 0.1, 1, 1.5, 2, 2.5, 3]  1.01, 1.05, 1.1, 1.2, 1.3, 1.4, 
 
         sgc_weight = response_weights[resp_type]['sgc']
         tv_weight = response_weights[resp_type]['tv']
@@ -580,7 +584,7 @@ def main():
             print(sim_dir)
 
             prot = CNSoundStim(seed=seed, characteristic_frequency=args.characteristic_frequency, 
-                               hearing=args.hearing, loss_limit=args.loss_limit, cohc=cohc, cihc=cihc,
+                               hearing=args.hearing, loss_limit=args.loss_limit, loss_frac=loss_frac, cohc=cohc, cihc=cihc,
                                synapsetype=syntype, syn_opts=syn_opts, include_ic=args.include_ic, pyr_erev=erev)
 
             print(f'Synaptic weights: SGC->P x {sgc_weight}, V->P x {tv_weight}, D->P x {ds_weight}')
