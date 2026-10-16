@@ -19,6 +19,7 @@ from matplotlib.ticker import ScalarFormatter
 import itertools
 import compress_pickle
 import seaborn as sns
+from scipy.signal import welch
 
 COMPRESSION = 'gzip'
 
@@ -42,11 +43,15 @@ parula_colors = [(0.2081, 0.1663, 0.5292), (0.2116, 0.1898, 0.5777), (0.2123, 0.
 # Create the colormap
 parula_cmap = mpl.colors.LinearSegmentedColormap.from_list('parula', parula_colors, N=256)
 
+def log_decay(cf, freq_half, width, smin=0, smax=1):
+    return smin + ((smax - smin) / (1 + np.exp((cf - freq_half)/width)))
+
 start_t = time.time()
 
 class CharacterizeNetwork(Protocol):
     def __init__(self, seed, frequencies, cells_per_band=1, synapsetype="simple", syn_opts=None, pyr_erev=-62, pyr_erev_loss=-62,
-                 hearing='normal', loss_limit=99e3, loss_frac=0, cohc=1, cihc=1, 
+                 sound_type='pure_tone',hearing='normal', loss_limit=99e3, loss_frac=0, cohc=1, cihc=1, 
+                 cohc_decay=False, cihc_decay=False, sgn_decay=False,
                  temp=34.0, dt=0.025, enable_ic=False):
         Protocol.__init__(self)
 
@@ -54,17 +59,40 @@ class CharacterizeNetwork(Protocol):
         self.temp = temp
         self.dt = dt
         self.syn_opts = syn_opts
+        self.sound_type = sound_type
         self.hearing = hearing  # normal or loss
         self.loss_limit = loss_limit
         self.loss_frac = loss_frac
         self.enable_ic = enable_ic
+
+        if cohc_decay:
+            cohc_decay = {'func': log_decay,
+                          'freq_half': 17*1e3,
+                          'width': 2.5*1e3,
+                          'smin': 0.2,
+                          'smax': 1}
+        if cihc_decay:
+            cihc_decay = {'func': log_decay,
+                          'freq_half': 22.1*1e3,
+                          'width': 3.8*1e3,
+                          'smin': 0.5,
+                          'smax': 1}
+        if sgn_decay:
+            sgn_decay = {'func': log_decay,
+                         'freq_half': 18.5*1e3,
+                         'width': 3.4*1e3,
+                         'smin': 0.3,
+                         'smax': 1}
 
         # Seed now to ensure network generation is stable
         random_seed.set_seed(seed)
         # Create cell populations.
         # This creates a complete set of _virtual_ cells for each population. No
         # cells are instantiated at this point.
-        self.sgc = populations.SGC(model="dummy", synapsetype=synapsetype, hearing=self.hearing, loss_frac=loss_frac, loss_limit=self.loss_limit, cohc=cohc, cihc=cihc)
+        self.sgc = populations.SGC(model="dummy", synapsetype=synapsetype, 
+                                   hearing=self.hearing, loss_frac=loss_frac, 
+                                   loss_limit=self.loss_limit, cohc=cohc, cihc=cihc,
+                                   cohc_decay=cohc_decay, cihc_decay=cihc_decay, sgn_decay=sgn_decay)
         self.dstellate = populations.DStellate(synapsetype=synapsetype)
 
         self.pyramidal = populations.Pyramidal(synapsetype=synapsetype, syn_opts=syn_opts, 
@@ -312,7 +340,7 @@ class CharacterizeNetwork(Protocol):
                 n_spikes = ((spikes >= response[0]) & (spikes < response[1])).sum()
 
                 # freq = stim['f0']
-                freq = 'bbn' if 'f0' not in stim.keys() else stim['f0']
+                freq = self.sound_type if 'f0' not in stim.keys() else stim['f0']
                 level = stim['dbspl']
 
                 j = freqs.index(freq)
@@ -349,6 +377,91 @@ class CharacterizeNetwork(Protocol):
                    'matrix': matrix_exact}
         # pickle.dump(rm_data, open(os.path.join(output_dir, f'DATA-{filename}.pkl'), 'wb'))
         compress_pickle.dump(rm_data, open(os.path.join(output_dir, f'DATA-{filename}.pkl'), 'wb'), compression=COMPRESSION)
+
+
+    def time_weight_probability_density(self, spike_times, level_weights, bin_width):
+
+        all_freqs = []
+        all_weights = []
+
+        for i, spikes in enumerate(spike_times):
+
+            isis_ms = np.diff(spikes)  # * level_weights[i][0]
+            freqs_hz = 1000.0 / isis_ms 
+
+            isis_ms *= level_weights[i]
+            all_freqs.append(freqs_hz)
+            all_weights.append(isis_ms)
+
+        all_freqs = np.concatenate(all_freqs)
+        all_weights = np.concatenate(all_weights)
+
+        all_weights = all_weights / np.sum(all_weights)
+
+        bin_edges_hz = np.arange(0, np.max(all_freqs) + bin_width, bin_width)
+
+        density, _ = np.histogram(all_freqs, bins=bin_edges_hz, weights=all_weights)
+
+        density = density / np.diff(bin_edges_hz)
+        bin_centers_hz = 0.5 * (bin_edges_hz[:-1] + bin_edges_hz[1:])
+        
+        avg_freq = np.average(all_freqs)
+
+        return avg_freq, density, bin_centers_hz,  bin_edges_hz
+
+
+    def plot_proability_density_curve(self, cf, nreps, freq, levels, results, baseline, response, output_dir):
+        
+        cf = int(cf)
+        pop_type = 'pyramidal'
+        pyr_cfs = np.array(list(self.pyramidal_ids_per_band.keys()))
+        cell_ind = self.pyramidal_ids_per_band[pyr_cfs[np.argmin(np.abs(cf - pyr_cfs))]][0]
+
+        spont_spikes = 0
+        spont_time = 0
+
+        for stim, iterations in list(results.values()):
+            for vec in list(iterations.values()):
+                spikes = vec[(pop_type, cell_ind)][1]
+                spont_spikes += ((spikes >= baseline[0]) * (spikes < baseline[1])).sum()
+                spont_time += baseline[1] - baseline[0]
+
+        spont_rate = spont_spikes / (spont_time*1e-3)
+
+        all_spikes = []
+        level_weights = []
+
+        for level in levels:
+            
+            pyr_spkt = results[f'f0: {freq}  dBspl: {int(level)}'][1][0][('pyramidal', cell_ind)][1]
+            pyr_spkt = pyr_spkt[np.where((pyr_spkt > response[0]) & (pyr_spkt < response[1]))]
+            all_spikes.append(pyr_spkt)
+            level_weights.append(1)
+
+        avg_freq, density, bin_centers, bin_edges = self.time_weight_probability_density(all_spikes, level_weights, bin_width=10)
+
+        fig, axs = plt.subplots(1,1,figsize=(15,4),sharex=True, sharey=True)
+
+        axs.axvline(avg_freq, color='skyblue', label='Average')
+        axs.axvline(spont_rate, color='darkseagreen', label='Spontaneous')
+        axs.bar(bin_centers, density, width=np.diff(bin_edges), align='center')
+        axs.set_ylabel('Probability Density (1/Hz)')
+        axs.set_xlabel('Frequency (Hz)')
+        axs.set_title(f'{self.hearing} - {int(cf//1e3)}kHz CF Probability Density Curve')
+
+        axs.legend(loc='upper right')
+
+        fig.tight_layout()
+
+        filename = f'{cf}cf-probability_density_curve'
+        if 'loss' in self.hearing:
+            filename += '-loss'
+        fig.savefig(os.path.join(output_dir, f'{filename}.png'), dpi=300)
+
+        pcd_data = {'all_spikes': all_spikes,
+                    'spont_rate': spont_rate}
+        # pickle.dump(rm_data, open(os.path.join(output_dir, f'DATA-{filename}.pkl'), 'wb'))
+        compress_pickle.dump(pcd_data, open(os.path.join(output_dir, f'DATA-{filename}.pkl'), 'wb'), compression=COMPRESSION)
 
 
     def get_evoked_firing_rates(self, cell_type, results, response, pyr_ids_per_band=None):
@@ -390,7 +503,7 @@ class CharacterizeNetwork(Protocol):
 
             stim_avg_rates = np.average(stim_avg_rates, axis=0)
             
-            rates_key = ('bbn', stim['dbspl']) if 'f0' not in stim.keys() else (stim['f0'], stim['dbspl'])
+            rates_key = (self.sound_type, stim['dbspl']) if 'f0' not in stim.keys() else (stim['f0'], stim['dbspl'])
             avg_rates[rates_key] = stim_avg_rates
             cell_ids[rates_key] = stim_cell_ids[0]
 
@@ -436,7 +549,7 @@ class CharacterizeNetwork(Protocol):
 
             stim_avg_rates = np.average(stim_avg_rates, axis=0)
             
-            rates_key = ('bbn', stim['dbspl']) if 'f0' not in stim.keys() else (stim['f0'], stim['dbspl'])
+            rates_key = (self.sound_type, stim['dbspl']) if 'f0' not in stim.keys() else (stim['f0'], stim['dbspl'])
             avg_rates[rates_key] = stim_avg_rates
             cell_ids[rates_key] = stim_cell_ids[0]
 
@@ -452,7 +565,7 @@ class CharacterizeNetwork(Protocol):
         return freqs_log
 
 
-    def plot_network_firing_rates(self, nreps, freq, level, results, baseline, response, output_dir):
+    def plot_network_firing_rates(self, nreps, freq, level, results, baseline, response, output_dir, dots=False):
 
         colors = {'pyramidal': 'tab:blue',
                   'vertical': 'tab:green',
@@ -487,6 +600,9 @@ class CharacterizeNetwork(Protocol):
             ds_ids, ds_rates = firing_rates['dstellate']
             sgc_ids, sgc_rates = firing_rates['sgc']
 
+            linestyle = '' if dots else '-'
+            marker = 'o' if dots else '' 
+
             if len(pyr_ids[(freq, level)]) > 1:
                 fig, axs = plt.subplots(4,1,figsize=(15,8), sharex=True)
             else:
@@ -494,7 +610,7 @@ class CharacterizeNetwork(Protocol):
             axs = axs.ravel()
 
             if len(pyr_ids[(freq, level)]) > 1:
-                axs[0].plot(pyr_cfs[pyr_ids[(freq, level)]], pyr_rates[(freq, level)], color=colors['pyramidal'], zorder=13, alpha=0.8, label='pyramidal')
+                axs[0].plot(pyr_cfs[pyr_ids[(freq, level)]], pyr_rates[(freq, level)], color=colors['pyramidal'], zorder=13, alpha=0.8, label='pyramidal', linestyle=linestyle, marker=marker)
                 # axs[0].legend(loc='upper right')
                 axs[0].set_title('Pyramidal')
                 # axs[0].set_xlim([0,sgc_cfs[-1]])
@@ -517,17 +633,17 @@ class CharacterizeNetwork(Protocol):
                 axs[0].set_ylabel('Voltage (mV)')
                 axs[0].set_xlim([t[0], t[-1]])
 
-            axs[1].plot(vert_cfs[vert_ids[(freq, level)]], vert_rates[(freq, level)], color=colors['vertical'], zorder=13, alpha=0.8, label='vertical')
+            axs[1].plot(vert_cfs[vert_ids[(freq, level)]], vert_rates[(freq, level)], color=colors['vertical'], zorder=13, alpha=0.8, label='vertical', linestyle=linestyle, marker=marker)
             # axs[1].legend(loc='upper right')
             axs[1].set_title('Vertical')
             # axs[1].set_xlim([0,sgc_cfs[-1]])
 
-            axs[2].plot(ds_cfs[ds_ids[(freq, level)]], ds_rates[(freq, level)], color=colors['dstellate'], zorder=13, alpha=0.8, label='dstellate')
+            axs[2].plot(ds_cfs[ds_ids[(freq, level)]], ds_rates[(freq, level)], color=colors['dstellate'], zorder=13, alpha=0.8, label='dstellate', linestyle=linestyle, marker=marker)
             # axs[2].legend(loc='upper right')
             axs[2].set_title('DStellate')
             # axs[2].set_xlim([0,sgc_cfs[-1]])
 
-            axs[3].plot(sgc_cfs[sgc_ids[(freq, level)]], sgc_rates[(freq, level)], color=colors['sgc'], zorder=13, alpha=0.8, label='sgc')
+            axs[3].plot(sgc_cfs[sgc_ids[(freq, level)]], sgc_rates[(freq, level)], color=colors['sgc'], zorder=13, alpha=0.8, label='sgc', linestyle=linestyle, marker=marker)
             # axs[3].legend(loc='upper right')
             axs[3].set_title('SGC')
             # axs[3].set_xlim([0,sgc_cfs[-1]])
@@ -550,6 +666,8 @@ class CharacterizeNetwork(Protocol):
             filename = f'population_{firing_type}_activity'
             if 'loss' in self.hearing:
                 filename += '-loss'
+            if dots:
+                filename += '-dots'
             fig.savefig(os.path.join(output_dir, f'{filename}.png'), dpi=300)
         
         fr_data = {'spont_rates': spont_rates,
@@ -560,6 +678,75 @@ class CharacterizeNetwork(Protocol):
         print(f"EVOKED - {evoked_rates['pyramidal']}")
 
 
+    def plot_time_series(self, nreps, freqs, levels, results, baseline, response, output_dir):
+
+        colors = {'pyramidal': 'tab:blue',
+                  'tuberculoventral': 'tab:green',
+                  'dstellate': 'tab:orange',
+                  'sgc': 'tab:purple'}
+
+        key = 'f0: %0.0f' % freqs if not isinstance(freqs, str) else f'f0: {freqs}'
+        key += '  dBspl: %0.0f' % levels
+
+        t = results[key][1][0]['t']
+        
+        cell_types_ids = list(results[key][1][0].keys())
+        cell_types_ids.remove('t')
+
+        pop_i = {'pyramidal': 0,
+                 'tuberculoventral': 1,
+                 'dstellate': 2,
+                 'sgc': 3}
+        pop_percent_skip = {'pyramidal': 0.6,
+                            'tuberculoventral': 0.3,
+                            'dstellate': 0.5,
+                            'sgc': 0.5}
+
+        fig, axs = plt.subplots(len(pop_i), 1, figsize=(25,20), sharex=True, height_ratios=[1,1,1,6])
+        axs = axs.ravel()
+
+        for cell_type, cell_id in cell_types_ids:
+
+            if random.random() < pop_percent_skip[cell_type]:
+                continue 
+
+            if 'sgc' in cell_type:
+
+                print(cell_id)
+
+                spike_times = results[key][1][0][(cell_type, cell_id)][1]
+
+                ax = axs[pop_i[cell_type]]
+                ax.vlines(spike_times, ymin=cell_id-0.5, ymax=cell_id+0.5, colors=colors[cell_type], zorder=12)
+                ax.set_title(cell_type)
+                ax.set_ylabel('SGC (id)')
+                
+            else:
+
+                vm = results[key][1][0][(cell_type, cell_id)][0]
+    
+                ax = axs[pop_i[cell_type]]
+                ax.plot(t, vm, color=colors[cell_type], lw=0.5, alpha=0.2, zorder=12)
+                title = cell_type if 'tuber' not in cell_type else 'vertical'
+                ax.set_title(title)
+                ax.set_ylabel('Voltage (mV)')
+
+        for ax in axs:
+            ax.axvspan(baseline[0], baseline[1], color='grey', alpha=0.1, zorder=1, label='spontaneous')
+            ax.axvspan(response[0], response[1], color='tab:pink', alpha=0.1, zorder=1, label='evoked')
+
+        axs[-1].set_xlabel('Time (ms)')
+        axs[-1].set_xlim([t[0], t[-1]])
+
+        axs[0].legend(loc='upper right')
+
+        fig.tight_layout()
+        filename = f'population_time_series'
+        if 'loss' in self.hearing:
+            filename += '-loss'
+        fig.savefig(os.path.join(output_dir, f'{filename}.png'), dpi=300)
+
+
     def plot_results(self, cf, nreps, freqs, levels, results, baseline, response, input_type, output_dir):
 
         if 'map' in input_type:
@@ -568,6 +755,8 @@ class CharacterizeNetwork(Protocol):
             self.plot_rate_level_curve(cf, nreps, freqs, levels, results, baseline, response, output_dir)
         else:
             self.plot_network_firing_rates(nreps, freqs[0], levels[0], results, baseline, response, output_dir)
+            self.plot_network_firing_rates(nreps, freqs[0], levels[0], results, baseline, response, output_dir, dots=True)
+            self.plot_time_series(nreps, freqs[0], levels[0], results, baseline, response, output_dir)
 
 
 def main():
@@ -585,12 +774,18 @@ def main():
     parser.add_argument('--full_spont', action='store_true', default=False, help='10 second stimulus conditions for simulation to calcualte spontaneous firing rate')
 
     parser.add_argument('-if', '--input_frequency', type=int, help='input sound frequency (Hz)')
-    parser.add_argument('-bbn', action='store_true', help='broadband noise input')
+    parser.add_argument('--bbn', action='store_true', help='broadband noise input')
+    parser.add_argument('--notch', action='store_true', help='notch noise input')
+    parser.add_argument('--notch_center', type=int, help='center frequency (Hz) of notch noise input')
+    parser.add_argument('--notch_width', type=int, help='width (Hz) of notch noise input')
     parser.add_argument('-idb', '--input_level', default=60, type=int, help='input level (dB SPL) of single input sound')
     parser.add_argument('-rm', '--response_map', action='store_true', help='create response map')
     parser.add_argument('--rm_fs', type=int, default=25, help='number of frequencies in response map')
     parser.add_argument('--rm_ls', type=int, default=11, help='number of sound levels in response map')
     parser.add_argument('-rl', '--rate_level', action='store_true', help='generate rate level curve')
+    parser.add_argument('-tc', '--tuning_curve', action='store_true', help='generate tuning curve')
+    parser.add_argument('-pcd', action='store_true', help='plot probability denstiy curve')
+    parser.add_argument('--pcd_cfs', nargs='*', default=[], help='cfs to plot probability denstiy curves')
 
     parser.add_argument('-sp', type=float, default=-1, help='sgc -> pyramidal synaptic weight')
     parser.add_argument('-vp', type=float, default=-1, help='vertical -> pyramidal synaptic weight')
@@ -602,10 +797,13 @@ def main():
     parser.add_argument('--cihcs', action='store_true', help='run batch iterations of level of inner hair cell impairment')
     parser.add_argument('--cohc', type=float, default=1.0, help='level of impairment of outer hair cells in cochlea model [0, 1]')
     parser.add_argument('--cihc', type=float, default=1.0, help='level of impairment of inner hair cells in cochlea model [0, 1]')
+    parser.add_argument('--cohc_decay', action='store_true', help='Cohc decays across characteristic frequencies')
+    parser.add_argument('--cihc_decay', action='store_true', help='Cihc decays across characteristic frequencies')
     parser.add_argument('--hf', type=float, default=1.0, help='homeostasis factor')
     parser.add_argument('--hp_loss', action='store_true', help='add homeostatic plasticity to hearing loss range')
     parser.add_argument('--hf_loss', type=float, default=1.0, help='homeostasis factor for hearing loss range')
     parser.add_argument('--sgn_loss', type=float, default=0, help='percent loss of SGN inputs in hearing loss range')
+    parser.add_argument('--sgn_decay', action='store_true', help='Decay loss of SGNs across characteristic frequencies')
     parser.add_argument('--erev_loss', type=float, default=-62, help='pyramidal cell leak reversal potential in hearing loss range')
     
     args = parser.parse_args()
@@ -634,12 +832,10 @@ def main():
         levels = np.linspace(20, 100, n_levels)  # 20, 100, n_levels
 
         input_type = 'response_map'
+        sound_type = 'pure_tone'
         input_info = f'{len(input_fvals)}fs_{n_levels}ls'
     
     elif args.rate_level:
-
-        input_fvals = np.array([args.input_frequency]) if not args.bbn else np.array(['bbn'])
-        n_frequencies = len(input_fvals)
 
         n_levels = 13   # 13
         levels = np.linspace(4, 100, n_levels)
@@ -647,26 +843,64 @@ def main():
         n_levels += 1
 
         input_type = 'rate_level'
-        input_info = f'{args.input_frequency // 1000}kHz' if not args.bbn else 'BBN'
+        if args.bbn:
+            input_fvals = np.array(['bbn'])
+            input_info = 'BBN'
+            sound_type = 'bbn'
+        elif args.notch:
+            input_fvals = np.array(['notch'])
+            input_info = f'NOTCH_{args.notch_center // 1000}kHz+-{args.notch_width // 1000}kHz'
+            sound_type = 'notch'
+        else:
+            input_fvals = np.array([args.input_frequency])
+            input_info = f'{args.input_frequency / 1e3}kHz'
+            sound_type = 'pure_tone'
         input_info += f'_{n_levels}ls'
+
+        n_frequencies = len(input_fvals)
+        
+    elif args.tuning_curve:
+
+        n_levels = 1
+        levels = np.array([args.input_level])
+
+        input_type = 'tuning_curve'
+
+        n_frequencies = 1
+        input_fvals = np.array([args.input_frequency])
+        input_info = f'{args.input_frequency / 1e3}kHz'
+        input_info += f'_{args.input_level}dB'
+        sound_type = 'pure_tone'
 
     else:
 
         n_frequencies = 1
-        input_fvals = np.array([args.input_frequency]) if not args.bbn else np.array(['bbn'])
-        
         n_levels = 1
         levels = np.array([args.input_level])
 
         input_type = 'single_sound'
         
-        input_info = f'{args.input_frequency // 1000}kHz' if not args.bbn else 'BBN'
+        if args.bbn:
+            input_fvals = np.array(['bbn'])
+            input_info = 'BBN'
+            sound_type = 'bbn'
+        elif args.notch:
+            input_fvals = np.array(['notch'])
+            input_info = f'NOTCH_{args.notch_center // 1000}kHz+-{args.notch_width // 1000}kHz'
+            sound_type = 'notch'
+        else:
+            input_fvals = np.array([args.input_frequency])
+            input_info = f'{args.input_frequency / 1e3}kHz'
+            sound_type = 'pure_tone'
         input_info += f'_{args.input_level}dB'
 
-    if not args.bbn:
-        print(("Input Frequencies:", input_fvals / 1000.0))
-    else:
+    if args.bbn:
         print(('Input: Broadband Noise'))
+    elif args.notch:
+        print((f'Input: Notch Noise at {args.notch_center} +- {args.notch_width}'))
+    else: 
+        print(("Input Frequencies:", input_fvals / 1000.0))
+
     print(("Input Levels:", levels))
 
     ### Pyramidal characerisitc frequencies
@@ -768,7 +1002,10 @@ def main():
     if 'normal' in args.hearing:
         hearing_flag = 'NORMAL'
     else:
-        hearing_flag = f'LOSS@{args.loss_limit // 1000}kHz-cohc_{args.cohc}-cihc_{args.cihc}-{100-args.sgn_loss}xSGN'
+        hearing_flag = f'LOSS@{args.loss_limit // 1000}kHz'
+        hearing_flag += '-cohc_decay' if args.cohc_decay else f'-cohc_{args.cohc}' 
+        hearing_flag += '-cihc_decay' if args.cihc_decay else f'-cihc_{args.cihc}' 
+        hearing_flag += '-sgn_decay' if args.sgn_decay else f'-{100-args.sgn_loss}xSGN'
         if args.erev_loss != -62:
             hearing_flag += f'-Erev{int(args.erev_loss)}'
     hearing_dir = os.path.join(input_dir, hearing_flag)
@@ -791,10 +1028,13 @@ def main():
 
     temp = 5
 
-    prot = CharacterizeNetwork(seed=seed, frequencies=cf_fvals, cells_per_band=args.cells_per_band, pyr_erev=args.erev, pyr_erev_loss=args.erev_loss,
-                                   hearing=args.hearing, loss_limit=args.loss_limit, loss_frac=loss_frac,
-                                   synapsetype=syntype,
-                                   cohc=args.cohc, cihc=args.cihc, syn_opts=syn_opts)
+    prot = CharacterizeNetwork(seed=seed, frequencies=cf_fvals, cells_per_band=args.cells_per_band, 
+                               sound_type=sound_type,
+                               pyr_erev=args.erev, pyr_erev_loss=args.erev_loss,
+                               hearing=args.hearing, loss_limit=args.loss_limit, loss_frac=loss_frac,
+                               synapsetype=syntype,
+                               cohc=args.cohc, cihc=args.cihc, syn_opts=syn_opts,
+                               cohc_decay=args.cohc_decay, cihc_decay=args.cihc_decay, sgn_decay=args.sgn_decay)
     # pickle.dump(prot.pyramidal_ids_per_band, open(os.path.join(weight_dir, 'pyramidal_ids_per_band.pkl'), 'wb'))
     compress_pickle.dump(prot.pyramidal_ids_per_band, open(os.path.join(weight_dir, 'pyramidal_ids_per_band.pkl'), 'wb'), compression=COMPRESSION)
 
@@ -810,15 +1050,93 @@ def main():
 
         f, db, iteration = task
         if isinstance(f, str):
-            stim = sound.NoisePip(
-                rate=100e3,
-                duration=stimpar["dur"],
-                dbspl=db,
-                ramp_duration=2.5e-3,
-                pip_duration=stimpar["pip"],
-                pip_start=stimpar["start"],
-                seed=seed+i
-            )
+            if args.bbn:
+                fs = 100e3
+                dt_n = 1 / fs
+
+                stim = sound.NoisePip(
+                    rate=fs,
+                    duration=stimpar["dur"],
+                    dbspl=db,
+                    ramp_duration=2.5e-3,
+                    pip_duration=stimpar["pip"],
+                    pip_start=stimpar["start"],
+                    seed=seed+i
+                )
+
+                fig, axs = plt.subplots(1,1,figsize=(5,5))
+                axs.plot(stim.time, stim.sound, color='k')
+                axs.set_xlabel('Time (s)')
+                axs.set_ylabel('Amplitude')
+                axs.set_title('Sound Input')
+                axs.axvspan(xmin=stimpar['baseline'][0]*1e-3, xmax=stimpar['baseline'][1]*1e-3, color='grey', alpha=0.4, label='spontaneous')
+                axs.axvspan(xmin=stimpar['response'][0]*1e-3, xmax=stimpar['response'][1]*1e-3, color='tab:pink', alpha=0.4, label='evoked')
+                axs.legend(loc='upper left')
+                fig.savefig(os.path.join(weight_dir, 'sound_input.png'), bbox_inches='tight', dpi=300)
+
+                f_psd, psd = welch(stim.sound, fs=fs, nperseg=min(2048,len(stim.sound)))
+                fig, axs = plt.subplots(1,1,figsize=(5,5))
+                axs.plot(f_psd, 10 * np.log10(psd + 1e-20), color='k')
+                axs.set_xlabel('Frequency (Hz)')
+                axs.set_ylabel('PSD (dB/Hz)')
+                axs.set_title('Power Spectrum')
+                axs.set_xlim(0,fs/2)
+                fig.savefig(os.path.join(weight_dir, 'sound_input-power_spectrum.png'), bbox_inches='tight', dpi=300)
+
+
+            else:  # notch
+                fs = 100e3
+                dt_n = 1 / fs
+                stim = sound.NotchNoisePip(
+                    rate=fs,
+                    duration=stimpar["dur"],
+                    dbspl=db,
+                    ramp_duration=2.5e-3,
+                    pip_duration=stimpar["pip"],
+                    pip_start=stimpar["start"],
+                    seed=seed+i,
+                    notch_frequency=args.notch_center,
+                    notch_width=args.notch_width
+                )
+
+                fig, axs = plt.subplots(1,1,figsize=(5,5))
+                axs.plot(stim.time, stim.sound, color='k')
+                axs.set_xlabel('Time (s)')
+                axs.set_ylabel('Amplitude')
+                axs.set_title('Sound Input')
+                axs.axvspan(xmin=stimpar['baseline'][0]*1e-3, xmax=stimpar['baseline'][1]*1e-3, color='grey', alpha=0.4, label='spontaneous')
+                axs.axvspan(xmin=stimpar['response'][0]*1e-3, xmax=stimpar['response'][1]*1e-3, color='tab:pink', alpha=0.4, label='evoked')
+                axs.legend(loc='upper left')
+                fig.savefig(os.path.join(weight_dir, 'sound_input.png'), bbox_inches='tight', dpi=300)
+
+                f_psd, psd = welch(stim.sound, fs=fs, nperseg=min(2048,len(stim.sound)))
+                fig, axs = plt.subplots(1,1,figsize=(5,5))
+                axs.plot(f_psd, 10 * np.log10(psd + 1e-20), color='k')
+                axs.set_xlabel('Frequency (Hz)')
+                axs.set_ylabel('PSD (dB/Hz)')
+                axs.set_title('Power Spectrum')
+                axs.set_xlim(0,fs/2)
+                fig.savefig(os.path.join(weight_dir, 'sound_input-power_spectrum.png'), bbox_inches='tight', dpi=300)
+
+                spont_time_cond = (stimpar['baseline'][0]*1e-3 < stim.time) & (stim.time < stimpar['baseline'][1]*1e-3)
+                f_spont, psd_spont = welch(stim.sound[spont_time_cond], fs=fs, nperseg=min(2048,len(stim.sound[spont_time_cond])))
+                evoked_time_cond = (stimpar['response'][0]*1e-3 < stim.time) & (stim.time < stimpar['response'][1]*1e-3)
+                f_evoked, psd_evoked = welch(stim.sound[evoked_time_cond], fs=fs, nperseg=min(2048,len(stim.sound[evoked_time_cond])))
+
+                fig, axs = plt.subplots(1,2,figsize=(10,5))
+                axs[0].plot(f_spont, 10 * np.log10(psd_spont + 1e-20), color='k')
+                axs[0].set_xlabel('Frequency (Hz)')
+                axs[0].set_ylabel('PSD (dB/Hz)')
+                axs[0].set_xlim(0,fs/2)
+                axs[0].set_title('Spontaneous Power Spectrum')
+
+                axs[1].plot(f_evoked, 10 * np.log10(psd_evoked + 1e-20), color='k')
+                axs[1].set_xlabel('Frequency (Hz)')
+                axs[1].set_ylabel('PSD (dB/Hz)')
+                axs[1].set_xlim(0,fs/2)
+                axs[1].set_title('Evoked Power Spectrum')
+                fig.savefig(os.path.join(weight_dir, 'spontaneous_evoked-power_spectrum.png'), bbox_inches='tight', dpi=300)
+
         else:
             stim = sound.TonePip(
                 rate=100e3,
@@ -829,8 +1147,6 @@ def main():
                 pip_duration=stimpar["pip"],
                 pip_start=stimpar["start"],
             )
-
-        ## TODO: notch noise
 
         cachefile = os.path.join(cachepath, f'seed={seed}_nfs={len(cf_fvals)}_f0={f}_dbspl={db}_cpb={args.cells_per_band}_syntype={syntype}_iter={iteration}')
         print(f'cache file exists - {bool(os.path.isfile(cachefile))}')
@@ -865,6 +1181,14 @@ def main():
     }
 
     prot.plot_results(args.characteristic_frequency, args.iterations, freqs, levels, results_od, stimpar['baseline'], stimpar['response'], input_type, weight_dir)
+
+    if args.pcd:
+        if len(args.pcd_cfs) > 0:
+            for pcd_cf in args.pcd_cfs:
+                prot.plot_proability_density_curve(pcd_cf, args.iterations, freqs[0], levels, results_od, stimpar['baseline'], stimpar['response'], weight_dir)
+        else:
+            prot.plot_proability_density_curve(args.characteristic_frequency, args.iterations, freqs[0], levels, results_od, stimpar['baseline'], stimpar['response'], weight_dir)
+
 
     metadata['stimpar'] = stimpar
     metadata['hearing'] = {'type': args.hearing,
